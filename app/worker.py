@@ -126,6 +126,7 @@ class BotWorker:
             # Générer la réponse
             logger.info("🧠 Génération réponse IA...")
             response = self.generate_response(bot_personality, user_message)
+            logger.info(f"✅ Réponse générée: {response[:100]}...")
             
             # Envoyer la réponse
             logger.info("📤 Envoi réponse...")
