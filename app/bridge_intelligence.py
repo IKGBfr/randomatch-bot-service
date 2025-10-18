@@ -7,6 +7,7 @@ import asyncpg
 import json
 import redis.asyncio as redis
 from datetime import datetime
+from typing import Dict
 from app.config import settings
 from app.redis_context import RedisContextManager
 import logging
