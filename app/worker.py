@@ -56,7 +56,7 @@ class BotWorker:
         )
         logger.info("✅ Connecté à OpenRouter")
     
-    def generate_response(self, bot_personality: str, user_message: str) -> str:
+    def generate_response(self, system_prompt: str, user_message: str) -> str:
         """Génère une réponse avec Grok"""
         try:
             response = self.openai_client.chat.completions.create(
@@ -64,7 +64,7 @@ class BotWorker:
                 messages=[
                     {
                         "role": "system",
-                        "content": bot_personality
+                        "content": system_prompt
                     },
                     {
                         "role": "user",
@@ -112,20 +112,20 @@ class BotWorker:
             logger.info(f"   Bot: {bot_id}")
             logger.info(f"   Message: {user_message[:100]}")
             
-            # Récupérer la personnalité du bot
+            # Récupérer le system prompt du bot
             bot_profile = self.supabase.table('bot_profiles').select(
-                'bot_personality'
+                'system_prompt'
             ).eq('id', bot_id).single().execute()
             
             if not bot_profile.data:
                 logger.error(f"❌ Bot profile non trouvé: {bot_id}")
                 return
             
-            bot_personality = bot_profile.data['bot_personality']
+            system_prompt = bot_profile.data['system_prompt']
             
             # Générer la réponse
             logger.info("🧠 Génération réponse IA...")
-            response = self.generate_response(bot_personality, user_message)
+            response = self.generate_response(system_prompt, user_message)
             logger.info(f"✅ Réponse générée: {response[:100]}...")
             
             # Envoyer la réponse
