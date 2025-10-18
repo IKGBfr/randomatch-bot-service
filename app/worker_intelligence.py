@@ -42,7 +42,13 @@ class WorkerIntelligence:
         logger.info("🔌 Connexion à Supabase...")
         self.supabase = create_client(
             settings.supabase_url,
-            settings.supabase_service_key
+            settings.supabase_service_key,
+            options={
+                "headers": {
+                    "apikey": settings.supabase_service_key,
+                    "Authorization": f"Bearer {settings.supabase_service_key}"
+                }
+            }
         )
         self.pre_processor = PreProcessor(self.supabase)
         logger.info("✅ Connecté à Supabase")
