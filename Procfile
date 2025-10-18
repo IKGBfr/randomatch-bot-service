@@ -1,8 +1,10 @@
-# Phase 1: Test basique
-# worker: python -m app.test_config
+# RandoMatch Bot Service - Railway
 
-# Phase 2: Bridge PostgreSQL NOTIFY
-bridge: python -m app.bridge
+# Bridge Intelligence avec grouping (Phase 1+)
+bridge: python -m app.bridge_intelligence
 
-# Phase 3+: Worker bot (décommenter plus tard)
+# Worker basique (Phase 1-2)
 # worker: python -m app.worker
+
+# Worker Intelligence (Phase 3+) - décommenter plus tard
+# worker: python -m app.worker_intelligence
