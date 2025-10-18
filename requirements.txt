@@ -1,0 +1,17 @@
+# Core dependencies
+python-dotenv==1.0.0
+pydantic==2.10.6
+pydantic-settings==2.7.1
+
+# Database
+asyncpg==0.30.0
+supabase==2.22.0
+
+# Redis
+redis==5.0.1
+
+# OpenAI (pour OpenRouter)
+openai==1.58.1
+
+# Async utilities
+aiohttp==3.11.11
