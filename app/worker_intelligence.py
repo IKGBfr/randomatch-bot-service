@@ -38,14 +38,16 @@ class WorkerIntelligence:
         self.pre_processor = None
         
     async def connect_supabase(self):
-        """Connexion Supabase"""
+        """Connexion Supabase avec service_role key forcée"""
         logger.info("🔌 Connexion à Supabase...")
         
+        # Créer client avec options explicites
         options = ClientOptions(
             headers={
                 "apikey": settings.supabase_service_key,
                 "Authorization": f"Bearer {settings.supabase_service_key}"
-            }
+            },
+            schema="public"
         )
         
         self.supabase = create_client(
@@ -53,6 +55,10 @@ class WorkerIntelligence:
             settings.supabase_service_key,
             options=options
         )
+        
+        # Forcer les headers sur le client postgrest
+        self.supabase.postgrest.auth(settings.supabase_service_key)
+        
         self.pre_processor = PreProcessor(self.supabase)
         logger.info("✅ Connecté à Supabase")
         
