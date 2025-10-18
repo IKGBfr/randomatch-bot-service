@@ -162,6 +162,12 @@ class BridgeIntelligence:
 
 
 async def main():
+    # Configuration du logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+    )
+    
     bridge = BridgeIntelligence()
     await bridge.run()
 
