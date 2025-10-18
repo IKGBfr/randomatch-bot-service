@@ -276,3 +276,4 @@ python -m app.test_grouping
 - Worker calcule délais adaptatifs
 - Worker active typing, génère, envoie
 - Comportement naturel et humain
+
