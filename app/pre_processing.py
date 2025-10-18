@@ -9,7 +9,7 @@ Pre-Processing - Vérifications avant de générer une réponse
 import asyncio
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
-from supabase import Client
+from app.supabase_client import SupabaseClient
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PreProcessor:
     """Gère les vérifications et chargements avant génération"""
     
-    def __init__(self, supabase: Client):
+    def __init__(self, supabase: SupabaseClient):
         self.supabase = supabase
         self.MAX_HISTORY_MESSAGES = 50
         self.TYPING_CHECK_DELAY = 2  # Secondes
@@ -43,230 +43,153 @@ class PreProcessor:
         for attempt in range(max_retries + 1):
             try:
                 # Récupérer événement typing
-                result = self.supabase.table('typing_events').select('*').eq(
-                    'user_id', user_id
-                ).eq(
-                    'match_id', match_id
-                ).maybe_single().execute()
+                result = await self.supabase.select(
+                    'typing_events',
+                    filters={'user_id': user_id, 'match_id': match_id}
+                )
                 
-                if result.data and result.data.get('is_typing'):
-                    logger.info(f"👤 User tape encore (attempt {attempt + 1}/{max_retries + 1})")
+                if result and len(result) > 0:
+                    typing_event = result[0]
+                    is_typing = typing_event.get('is_typing', False)
                     
-                    # Si pas dernier attempt, attendre et re-vérifier
-                    if attempt < max_retries:
+                    if is_typing and attempt < max_retries:
                         await asyncio.sleep(self.TYPING_CHECK_DELAY)
                         continue
                     
-                    return True  # User tape toujours
+                    return is_typing
                 
-                # User ne tape pas
                 return False
                 
             except Exception as e:
                 logger.error(f"❌ Erreur check typing: {e}")
-                return False  # En cas d'erreur, continuer
+                return False
         
         return False
     
-    def fetch_conversation_history(
+    async def fetch_conversation_history(
         self,
-        match_id: str,
-        limit: int = None
+        match_id: str
     ) -> List[Dict]:
         """
-        Récupère l'historique complet de la conversation
+        Charge l'historique complet de la conversation
         
         Args:
             match_id: ID du match
-            limit: Nombre max de messages (défaut: MAX_HISTORY_MESSAGES)
             
         Returns:
-            Liste de messages ordonnés (plus ancien → plus récent)
+            Liste de messages avec profils
         """
+        logger.info("📦 Chargement contexte complet...")
+        
         try:
-            if limit is None:
-                limit = self.MAX_HISTORY_MESSAGES
+            # Charger messages avec profils
+            messages = await self.supabase.select(
+                'messages',
+                columns='id,content,sender_id,created_at,type,profiles!messages_sender_id_fkey(first_name,is_bot)',
+                filters={'match_id': match_id},
+                order='created_at.asc',
+                limit=self.MAX_HISTORY_MESSAGES
+            )
             
-            # Récupérer messages avec infos sender
-            result = self.supabase.table('messages').select(
-                'id, content, sender_id, created_at, type, profiles!messages_sender_id_fkey(first_name, is_bot)'
-            ).eq(
-                'match_id', match_id
-            ).order(
-                'created_at', desc=False  # Plus ancien d'abord
-            ).limit(limit).execute()
-            
-            if not result.data:
-                logger.warning(f"⚠️  Aucun message dans historique")
-                return []
-            
-            # Formater messages
-            messages = []
-            for msg in result.data:
-                profile = msg.get('profiles', {})
-                messages.append({
-                    'id': msg['id'],
-                    'content': msg['content'],
-                    'sender_id': msg['sender_id'],
-                    'sender_name': profile.get('first_name', 'Unknown'),
-                    'is_bot': profile.get('is_bot', False),
-                    'created_at': msg['created_at'],
-                    'type': msg.get('type', 'text')
-                })
-            
-            logger.info(f"📚 Historique chargé: {len(messages)} messages")
-            return messages
+            return messages if messages else []
             
         except Exception as e:
             logger.error(f"❌ Erreur fetch history: {e}")
             return []
     
-    def fetch_bot_memory(
+    async def fetch_bot_memory(
         self,
         bot_id: str,
         user_id: str
     ) -> Optional[Dict]:
         """
-        Récupère la mémoire du bot pour cet utilisateur
+        Charge la mémoire bot pour cet utilisateur
         
         Args:
             bot_id: ID du bot
             user_id: ID de l'utilisateur
             
         Returns:
-            Dict avec mémoire ou None
+            Mémoire bot ou None
         """
         try:
-            result = self.supabase.table('bot_memory').select('*').eq(
-                'bot_id', bot_id
-            ).eq(
-                'user_id', user_id
-            ).maybe_single().execute()
+            result = await self.supabase.select(
+                'bot_memory',
+                filters={'bot_id': bot_id, 'user_id': user_id}
+            )
             
-            if result.data:
-                logger.info(f"🧠 Mémoire chargée (trust: {result.data.get('trust_score', 0)})")
-                return result.data
-            else:
-                logger.info(f"🆕 Pas de mémoire existante (première conversation)")
-                return self._create_default_memory(bot_id, user_id)
-                
+            return result[0] if result and len(result) > 0 else None
+            
         except Exception as e:
             logger.error(f"❌ Erreur fetch memory: {e}")
-            return self._create_default_memory(bot_id, user_id)
+            return None
     
-    def _create_default_memory(self, bot_id: str, user_id: str) -> Dict:
-        """Crée une mémoire par défaut"""
-        return {
-            'bot_id': bot_id,
-            'user_id': user_id,
-            'user_name': None,
-            'trust_score': 0,
-            'relationship_level': 'stranger',
-            'conversation_tone': 'neutral',
-            'preferred_topics': [],
-            'topics_to_avoid': [],
-            'important_facts': {},
-            'total_messages_exchanged': 0
-        }
-    
-    def fetch_bot_profile(self, bot_id: str) -> Optional[Dict]:
+    async def fetch_bot_profile(
+        self,
+        bot_id: str
+    ) -> Optional[Dict]:
         """
-        Récupère le profil du bot
+        Charge le profil du bot
         
         Args:
             bot_id: ID du bot
             
         Returns:
-            Dict avec profil bot
+            Profil bot ou None
         """
         try:
-            result = self.supabase.table('bot_profiles').select(
-                'system_prompt, bot_personality, temperature'
-            ).eq('id', bot_id).single().execute()
+            result = await self.supabase.select(
+                'bot_profiles',
+                columns='system_prompt,bot_personality,temperature',
+                filters={'id': bot_id}
+            )
             
-            if result.data:
-                logger.info(f"🤖 Bot profile chargé ({result.data.get('bot_personality')})")
-                return result.data
-            
-            return None
+            return result[0] if result and len(result) > 0 else None
             
         except Exception as e:
             logger.error(f"❌ Erreur fetch bot profile: {e}")
             return None
     
-    def calculate_time_since_last_bot_message(
-        self,
-        messages: List[Dict],
-        bot_id: str
-    ) -> float:
-        """
-        Calcule le temps depuis le dernier message du bot
-        
-        Args:
-            messages: Liste des messages
-            bot_id: ID du bot
-            
-        Returns:
-            Minutes depuis dernier message bot (0 si aucun)
-        """
-        # Trouver dernier message bot
-        bot_messages = [m for m in messages if m['sender_id'] == bot_id]
-        
-        if not bot_messages:
-            return 0
-        
-        last_bot_msg = bot_messages[-1]
-        last_time = datetime.fromisoformat(last_bot_msg['created_at'].replace('Z', '+00:00'))
-        now = datetime.now(last_time.tzinfo)
-        
-        delta = (now - last_time).total_seconds() / 60  # Minutes
-        
-        return round(delta, 2)
-    
     async def prepare_context(
         self,
         match_id: str,
         bot_id: str,
-        user_id: str,
-        check_typing: bool = True
-    ) -> Tuple[bool, Dict]:
+        sender_id: str
+    ) -> Dict:
         """
-        Prépare tout le contexte nécessaire
+        Prépare le contexte complet pour la génération
         
         Args:
             match_id: ID du match
             bot_id: ID du bot
-            user_id: ID de l'user
-            check_typing: Vérifier si user tape
+            sender_id: ID de l'utilisateur
             
         Returns:
-            (should_wait, context_dict)
-            - should_wait: True si doit attendre (user tape)
-            - context_dict: Tout le contexte chargé
+            Dict avec history, memory, bot_profile
         """
-        # 1. Check typing
-        if check_typing:
-            is_typing = await self.check_user_typing(match_id, user_id)
-            if is_typing:
-                logger.info("⏸️  User tape encore, on attend...")
-                return True, {}
+        # Vérifier typing
+        is_typing = await self.check_user_typing(match_id, sender_id)
         
-        # 2. Charger tout
-        logger.info("📦 Chargement contexte complet...")
+        # Charger contexte
+        history = await self.fetch_conversation_history(match_id)
+        memory = await self.fetch_bot_memory(bot_id, sender_id)
+        bot_profile = await self.fetch_bot_profile(bot_id)
         
-        history = self.fetch_conversation_history(match_id)
-        memory = self.fetch_bot_memory(bot_id, user_id)
-        bot_profile = self.fetch_bot_profile(bot_id)
-        time_since_last = self.calculate_time_since_last_bot_message(history, bot_id)
-        
-        context = {
-            'history': history,
-            'memory': memory,
-            'bot_profile': bot_profile,
-            'time_since_last_bot_minutes': time_since_last,
-            'conversation_length': len(history)
-        }
+        # Créer mémoire par défaut si inexistante
+        if not memory:
+            memory = {
+                'trust_score': 0,
+                'relationship_level': 'stranger',
+                'conversation_tone': 'neutral',
+                'preferred_topics': [],
+                'topics_to_avoid': []
+            }
         
         logger.info(f"✅ Contexte prêt ({len(history)} msgs, trust={memory.get('trust_score', 0)})")
         
-        return False, context
+        return {
+            'is_typing': is_typing,
+            'history': history,
+            'memory': memory,
+            'bot_profile': bot_profile
+        }

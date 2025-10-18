@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from supabase import create_client, Client, ClientOptions
+from app.supabase_client import SupabaseClient
 import redis.asyncio as redis
 from openai import OpenAI
 
@@ -32,33 +32,15 @@ class WorkerIntelligence:
     """Worker intelligent avec analyse contextuelle complète"""
     
     def __init__(self):
-        self.supabase: Client = None
+        self.supabase: SupabaseClient = None
         self.redis_client = None
         self.openai_client = None
         self.pre_processor = None
         
     async def connect_supabase(self):
-        """Connexion Supabase avec service_role key forcée"""
+        """Connexion Supabase custom client"""
         logger.info("🔌 Connexion à Supabase...")
-        
-        # Créer client avec options explicites
-        options = ClientOptions(
-            headers={
-                "apikey": settings.supabase_service_key,
-                "Authorization": f"Bearer {settings.supabase_service_key}"
-            },
-            schema="public"
-        )
-        
-        self.supabase = create_client(
-            settings.supabase_url,
-            settings.supabase_service_key,
-            options=options
-        )
-        
-        # Forcer les headers sur le client postgrest
-        self.supabase.postgrest.auth(settings.supabase_service_key)
-        
+        self.supabase = SupabaseClient()
         self.pre_processor = PreProcessor(self.supabase)
         logger.info("✅ Connecté à Supabase")
         

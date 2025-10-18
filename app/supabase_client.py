@@ -1,124 +1,125 @@
-"""Client Supabase pour interactions database."""
+"""Client Supabase custom avec auth service_role forcée"""
 
-from typing import Dict, Optional
-from supabase import create_client, Client
+import httpx
+from typing import Dict, List, Optional, Any
 from app.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SupabaseClient:
-    """Client Supabase singleton."""
+    """Client HTTP direct pour Supabase avec service_role"""
     
-    _instance: Optional[Client] = None
+    def __init__(self):
+        self.base_url = f"{settings.supabase_url}/rest/v1"
+        self.headers = {
+            "apikey": settings.supabase_service_key,
+            "Authorization": f"Bearer {settings.supabase_service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
+        self.client = httpx.AsyncClient(timeout=30.0)
     
-    @classmethod
-    def get_client(cls) -> Client:
-        """Retourne instance Supabase client."""
-        if cls._instance is None:
-            cls._instance = create_client(
-                settings.supabase_url,
-                settings.supabase_service_key
+    async def select(
+        self, 
+        table: str, 
+        columns: str = "*",
+        filters: Optional[Dict[str, Any]] = None,
+        order: Optional[str] = None,
+        limit: Optional[int] = None
+    ) -> List[Dict]:
+        """SELECT query"""
+        url = f"{self.base_url}/{table}"
+        params = {"select": columns}
+        
+        if filters:
+            for key, value in filters.items():
+                params[key] = f"eq.{value}"
+        
+        if order:
+            params["order"] = order
+        
+        if limit:
+            params["limit"] = str(limit)
+        
+        try:
+            response = await self.client.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"❌ Erreur SELECT {table}: {e}")
+            return []
+    
+    async def insert(
+        self,
+        table: str,
+        data: Dict[str, Any]
+    ) -> Optional[Dict]:
+        """INSERT query"""
+        url = f"{self.base_url}/{table}"
+        
+        try:
+            response = await self.client.post(
+                url, 
+                headers=self.headers, 
+                json=data
             )
-        return cls._instance
+            response.raise_for_status()
+            result = response.json()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"❌ Erreur INSERT {table}: {e}")
+            return None
     
-    @classmethod
-    def get_bot_profile(cls, bot_id: str) -> Dict:
-        """
-        Récupère le profil complet d'un bot.
+    async def upsert(
+        self,
+        table: str,
+        data: Dict[str, Any]
+    ) -> Optional[Dict]:
+        """UPSERT query"""
+        url = f"{self.base_url}/{table}"
+        headers = {**self.headers, "Prefer": "resolution=merge-duplicates"}
         
-        Args:
-            bot_id: UUID du bot
-            
-        Returns:
-            Dict avec bot_personality, system_prompt, temperature, etc.
-        """
-        client = cls.get_client()
-        
-        # Récupérer bot_profiles + profiles (pour infos de base)
-        result = (
-            client.table('bot_profiles')
-            .select('*, profiles!inner(*)')
-            .eq('id', bot_id)
-            .single()
-            .execute()
-        )
-        
-        if not result.data:
-            raise ValueError(f"Bot {bot_id} not found")
-        
-        return result.data
+        try:
+            response = await self.client.post(
+                url,
+                headers=headers,
+                json=data
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"❌ Erreur UPSERT {table}: {e}")
+            return None
     
-    @classmethod
-    def get_all_active_bots(cls) -> list:
-        """Récupère tous les bots actifs."""
-        client = cls.get_client()
+    async def update(
+        self,
+        table: str,
+        data: Dict[str, Any],
+        filters: Dict[str, Any]
+    ) -> bool:
+        """UPDATE query"""
+        url = f"{self.base_url}/{table}"
+        params = {}
         
-        result = (
-            client.table('bot_profiles')
-            .select('id, profiles!inner(first_name, email)')
-            .eq('is_active', True)
-            .execute()
-        )
+        for key, value in filters.items():
+            params[key] = f"eq.{value}"
         
-        return result.data
+        try:
+            response = await self.client.patch(
+                url,
+                headers=self.headers,
+                params=params,
+                json=data
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Erreur UPDATE {table}: {e}")
+            return False
     
-    @classmethod
-    def insert_message(cls, match_id: str, sender_id: str, content: str) -> Dict:
-        """
-        Insère un message dans la table messages.
-        
-        Args:
-            match_id: UUID du match
-            sender_id: UUID du bot (sender)
-            content: Contenu du message
-            
-        Returns:
-            Message créé
-        """
-        client = cls.get_client()
-        
-        result = (
-            client.table('messages')
-            .insert({
-                'match_id': match_id,
-                'sender_id': sender_id,
-                'content': content,
-                'type': 'text',
-                'status': 'sent'
-            })
-            .execute()
-        )
-        
-        return result.data[0] if result.data else None
-    
-    @classmethod
-    def update_typing_status(cls, user_id: str, match_id: str, is_typing: bool):
-        """
-        Met à jour le statut typing d'un bot.
-        
-        Args:
-            user_id: UUID du bot
-            match_id: UUID du match
-            is_typing: True si en train de taper
-        """
-        client = cls.get_client()
-        
-        client.table('typing_events').upsert({
-            'user_id': user_id,
-            'match_id': match_id,
-            'is_typing': is_typing,
-            'started_at': 'now()' if is_typing else None
-        }).execute()
-
-
-# Instance globale
-supabase_client = SupabaseClient()
-
-
-def get_bot_profile(bot_id: str) -> Dict:
-    """Helper pour récupérer profil bot."""
-    return supabase_client.get_bot_profile(bot_id)
-
-
-def get_all_active_bots() -> list:
-    """Helper pour récupérer tous les bots actifs."""
-    return supabase_client.get_all_active_bots()
+    async def close(self):
+        """Fermer le client"""
+        await self.client.aclose()
