@@ -1,10 +1,8 @@
 # RandoMatch Bot Service - Railway
+# Phase 2: Intelligence Conversationnelle
 
-# Bridge Intelligence avec grouping (Phase 1+)
+# Bridge Intelligence avec grouping
 bridge: python -m app.bridge_intelligence
 
-# Worker basique (Phase 1-2)
-# worker: python -m app.worker
-
-# Worker Intelligence (Phase 3+) - décommenter plus tard
-# worker: python -m app.worker_intelligence
+# Worker Intelligence avec analyse contextuelle
+worker: python -m app.worker_intelligence

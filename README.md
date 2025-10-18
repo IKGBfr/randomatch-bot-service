@@ -136,11 +136,20 @@ KEYS context:*         # Voir contextes actifs
 - Messages rapides → Grouping 3s
 - Context Redis avec TTL 10s
 
-### 🚧 Phase 2 : Worker Intelligence (EN COURS)
-- [ ] `pre_processing.py` - Check typing user
-- [ ] `timing_engine.py` - Calculs délais
-- [ ] `analysis.py` - Analyse message
-- [ ] `worker_intelligence.py` - Orchestration
+### ✅ Phase 2 : Worker Intelligence (TERMINÉ)
+- [x] `utils/timing.py` - Timing Engine
+- [x] `analysis.py` - Analyse contextuelle
+- [x] `pre_processing.py` - Check typing, load context
+- [x] `worker_intelligence.py` - Orchestration complète
+
+**Fonctionnel :**
+- Check user typing avant réponse
+- Load full history (50 messages)
+- Load bot_memory
+- Analyse urgency/complexity/tone
+- Timing adaptatif (2-15s)
+- Multi-messages naturels
+- Typing indicator avec simulation frappe
 
 ### ⏳ Phase 3 : Prompt Building
 - [ ] `prompt_builder.py` - Construction prompts
@@ -234,14 +243,36 @@ railway logs --tail
 
 ---
 
-**Status :** 🟢 Phase 1 Complete - Grouping Actif  
-**Version :** 2.0.0 - Intelligence  
+**Status :** 🟢 Phase 2 Complete - Worker Intelligence Actif  
+**Version :** 2.1.0 - Intelligence Conversationnelle  
 **Dernière mise à jour :** 18 octobre 2025
 
 ---
 
 ## 🎯 Next Steps
 
-1. **Tester grouping** avec messages réels
-2. **Phase 2** : Worker Intelligence
-3. **Deploy production** quand Phase 2-3 complètes
+1. **Tester Phase 2** en local (voir ci-dessous)
+2. **Phase 3** : Prompt Building Avancé
+3. **Phase 4** : Memory Manager
+4. **Deploy production** quand Phase 3-4 complètes
+
+## 🧪 Test Phase 2 Complet
+
+```bash
+# Terminal 1: Bridge
+python -m app.bridge_intelligence
+
+# Terminal 2: Worker Intelligence
+python -m app.worker_intelligence
+
+# Terminal 3: Test
+python -m app.test_grouping
+```
+
+**Logs attendus :**
+- Bridge détecte notifications
+- Worker charge contexte (typing, history, memory)
+- Worker analyse message (urgency, complexity)
+- Worker calcule délais adaptatifs
+- Worker active typing, génère, envoie
+- Comportement naturel et humain
