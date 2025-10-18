@@ -1,8 +1,15 @@
 """Configuration module pour RandoMatch Bot Service."""
 
 import os
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+# Charger le .env explicitement AVANT tout
+env_path = Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path, override=True)
 
 
 class Settings(BaseSettings):
@@ -48,7 +55,7 @@ class Settings(BaseSettings):
         return self.environment.lower() in ("development", "dev")
 
 
-# Instance globale
+# Instance globale créée APRÈS le load_dotenv
 settings = Settings()
 
 
