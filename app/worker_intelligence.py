@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 import redis.asyncio as redis
 from openai import OpenAI
 
@@ -40,15 +40,18 @@ class WorkerIntelligence:
     async def connect_supabase(self):
         """Connexion Supabase"""
         logger.info("🔌 Connexion à Supabase...")
+        
+        options = ClientOptions(
+            headers={
+                "apikey": settings.supabase_service_key,
+                "Authorization": f"Bearer {settings.supabase_service_key}"
+            }
+        )
+        
         self.supabase = create_client(
             settings.supabase_url,
             settings.supabase_service_key,
-            options={
-                "headers": {
-                    "apikey": settings.supabase_service_key,
-                    "Authorization": f"Bearer {settings.supabase_service_key}"
-                }
-            }
+            options=options
         )
         self.pre_processor = PreProcessor(self.supabase)
         logger.info("✅ Connecté à Supabase")
