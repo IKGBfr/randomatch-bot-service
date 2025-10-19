@@ -65,3 +65,6 @@ class Config:
     
     # Environment
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+# Instance globale pour compatibilité avec ancien code
+settings = Config()
