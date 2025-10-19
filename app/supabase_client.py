@@ -20,6 +20,7 @@ class SupabaseClient:
             "Prefer": "return=representation"
         }
         self.client = httpx.AsyncClient(timeout=30.0)
+        logger.info(f"🔑 Service key: {settings.supabase_service_key[:20]}...{settings.supabase_service_key[-10:]}")
     
     async def select(
         self, 

@@ -229,15 +229,16 @@ TA RÉPONSE:"""
             # =============================
             logger.info("\n📦 Phase 1: Pre-processing...")
             
-            should_wait, context = await self.pre_processor.prepare_context(
+            context = await self.pre_processor.prepare_context(
                 match_id, bot_id, user_id
             )
             
-            if should_wait:
+            if context['is_typing']:
                 # User tape encore, repousser le job
                 logger.info("⏸️  User tape, on repousse le job...")
                 await asyncio.sleep(2)
                 await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                return
                 return
             
             # =============================
