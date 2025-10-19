@@ -75,3 +75,6 @@ settings.log_level = settings.LOG_LEVEL
 settings.supabase_url = settings.SUPABASE_URL
 settings.supabase_service_key = settings.SUPABASE_SERVICE_KEY
 settings.redis_url = settings.REDIS_URL
+settings.openrouter_api_key = settings.OPENROUTER_API_KEY
+settings.openrouter_base_url = settings.OPENROUTER_BASE_URL
+settings.openrouter_model = settings.OPENROUTER_MODEL
