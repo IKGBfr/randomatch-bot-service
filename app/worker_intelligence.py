@@ -41,6 +41,7 @@ class WorkerIntelligence:
         """Connexion Supabase custom client"""
         logger.info("🔌 Connexion à Supabase...")
         self.supabase = SupabaseClient()
+        await self.supabase.connect()  # Créer le pool PostgreSQL
         self.pre_processor = PreProcessor(self.supabase)
         logger.info("✅ Connecté à Supabase")
         
@@ -369,6 +370,8 @@ TA RÉPONSE:"""
             logger.info("🛑 Arrêt du worker...")
             if self.redis_client:
                 await self.redis_client.aclose()
+            if self.supabase:
+                await self.supabase.close()
 
 
 async def main():

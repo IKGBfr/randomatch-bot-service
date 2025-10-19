@@ -1,26 +1,31 @@
-"""Client Supabase custom avec auth service_role forcée"""
+"""Client Supabase via PostgreSQL direct (pas REST API)"""
 
-import httpx
+import asyncpg
 from typing import Dict, List, Optional, Any
 from app.config import settings
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
 
 class SupabaseClient:
-    """Client HTTP direct pour Supabase avec service_role"""
+    """Client PostgreSQL direct pour Supabase"""
     
     def __init__(self):
-        self.base_url = f"{settings.supabase_url}/rest/v1"
-        self.headers = {
-            "apikey": settings.supabase_service_key,
-            "Authorization": f"Bearer {settings.supabase_service_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        }
-        self.client = httpx.AsyncClient(timeout=30.0)
-        logger.info(f"🔑 Service key: {settings.supabase_service_key[:20]}...{settings.supabase_service_key[-10:]}")
+        self.pool = None
+        self.postgres_url = settings.postgres_connection_string
+        logger.info(f"🔑 PostgreSQL: {self.postgres_url[:50]}...")
+    
+    async def connect(self):
+        """Créer le pool de connexions"""
+        if not self.pool:
+            self.pool = await asyncpg.create_pool(
+                self.postgres_url,
+                min_size=2,
+                max_size=10
+            )
+            logger.info("✅ Pool PostgreSQL créé")
     
     async def select(
         self, 
@@ -31,23 +36,33 @@ class SupabaseClient:
         limit: Optional[int] = None
     ) -> List[Dict]:
         """SELECT query"""
-        url = f"{self.base_url}/{table}"
-        params = {"select": columns}
-        
-        if filters:
-            for key, value in filters.items():
-                params[key] = f"eq.{value}"
-        
-        if order:
-            params["order"] = order
-        
-        if limit:
-            params["limit"] = str(limit)
-        
         try:
-            response = await self.client.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            return response.json()
+            if not self.pool:
+                await self.connect()
+            
+            # Construire la requête
+            query = f"SELECT {columns} FROM public.{table}"
+            params = []
+            
+            if filters:
+                conditions = []
+                param_num = 1
+                for key, value in filters.items():
+                    conditions.append(f"{key} = ${param_num}")
+                    params.append(value)
+                    param_num += 1
+                query += " WHERE " + " AND ".join(conditions)
+            
+            if order:
+                query += f" ORDER BY {order}"
+            
+            if limit:
+                query += f" LIMIT {limit}"
+            
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+                return [dict(row) for row in rows]
+                
         except Exception as e:
             logger.error(f"❌ Erreur SELECT {table}: {e}")
             return []
@@ -58,17 +73,25 @@ class SupabaseClient:
         data: Dict[str, Any]
     ) -> Optional[Dict]:
         """INSERT query"""
-        url = f"{self.base_url}/{table}"
-        
         try:
-            response = await self.client.post(
-                url, 
-                headers=self.headers, 
-                json=data
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result[0] if result else None
+            if not self.pool:
+                await self.connect()
+            
+            # Construire la requête
+            columns = list(data.keys())
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [data[col] for col in columns]
+            
+            query = f"""
+                INSERT INTO public.{table} ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                RETURNING *
+            """
+            
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(query, *values)
+                return dict(row) if row else None
+                
         except Exception as e:
             logger.error(f"❌ Erreur INSERT {table}: {e}")
             return None
@@ -76,21 +99,35 @@ class SupabaseClient:
     async def upsert(
         self,
         table: str,
-        data: Dict[str, Any]
+        data: Dict[str, Any],
+        conflict_columns: List[str] = ['user_id', 'match_id']
     ) -> Optional[Dict]:
         """UPSERT query"""
-        url = f"{self.base_url}/{table}"
-        headers = {**self.headers, "Prefer": "resolution=merge-duplicates"}
-        
         try:
-            response = await self.client.post(
-                url,
-                headers=headers,
-                json=data
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result[0] if result else None
+            if not self.pool:
+                await self.connect()
+            
+            # Construire la requête
+            columns = list(data.keys())
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [data[col] for col in columns]
+            
+            # Colonnes à update lors du conflit
+            update_cols = [col for col in columns if col not in conflict_columns]
+            update_set = ', '.join([f"{col} = EXCLUDED.{col}" for col in update_cols])
+            
+            query = f"""
+                INSERT INTO public.{table} ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT ({', '.join(conflict_columns)}) 
+                DO UPDATE SET {update_set}
+                RETURNING *
+            """
+            
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(query, *values)
+                return dict(row) if row else None
+                
         except Exception as e:
             logger.error(f"❌ Erreur UPSERT {table}: {e}")
             return None
@@ -102,25 +139,43 @@ class SupabaseClient:
         filters: Dict[str, Any]
     ) -> bool:
         """UPDATE query"""
-        url = f"{self.base_url}/{table}"
-        params = {}
-        
-        for key, value in filters.items():
-            params[key] = f"eq.{value}"
-        
         try:
-            response = await self.client.patch(
-                url,
-                headers=self.headers,
-                params=params,
-                json=data
-            )
-            response.raise_for_status()
-            return True
+            if not self.pool:
+                await self.connect()
+            
+            # Construire SET clause
+            set_clauses = []
+            params = []
+            param_num = 1
+            
+            for key, value in data.items():
+                set_clauses.append(f"{key} = ${param_num}")
+                params.append(value)
+                param_num += 1
+            
+            # Construire WHERE clause
+            where_clauses = []
+            for key, value in filters.items():
+                where_clauses.append(f"{key} = ${param_num}")
+                params.append(value)
+                param_num += 1
+            
+            query = f"""
+                UPDATE public.{table}
+                SET {', '.join(set_clauses)}
+                WHERE {' AND '.join(where_clauses)}
+            """
+            
+            async with self.pool.acquire() as conn:
+                await conn.execute(query, *params)
+                return True
+                
         except Exception as e:
             logger.error(f"❌ Erreur UPDATE {table}: {e}")
             return False
     
     async def close(self):
-        """Fermer le client"""
-        await self.client.aclose()
+        """Fermer le pool"""
+        if self.pool:
+            await self.pool.close()
+            logger.info("🛑 Pool PostgreSQL fermé")
