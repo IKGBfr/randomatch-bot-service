@@ -27,7 +27,7 @@ class BridgeIntelligence:
         self.match_monitor = None
         self.supabase_client = None
         self.running = False
-        self.GROUPING_DELAY = 3  # Secondes
+        self.GROUPING_DELAY = 5  # Secondes (plus long pour attendre tous les messages)
         
     async def connect_postgres(self):
         """Connexion PostgreSQL"""
@@ -108,11 +108,16 @@ class BridgeIntelligence:
                     logger.info(f"🔄 Grouping: +1 message ({context['rapid_count'] + 1} total)")
                     await self.context_manager.update_context(match_id, message)
                     
-                    # Démarrer timer si pas déjà fait
-                    if not context.get('timer_started'):
-                        context['timer_started'] = True
-                        await self.context_manager.set_context(match_id, context)
-                        asyncio.create_task(self.delayed_push(match_id))
+                    # Annuler timer précédent si existe et redémarrer
+                    # Cela permet d'attendre que l'user finisse vraiment
+                    if context.get('timer_task'):
+                        context['timer_task'].cancel()
+                    
+                    # Créer nouveau timer de 5s
+                    timer_task = asyncio.create_task(self.delayed_push(match_id))
+                    context['timer_task'] = timer_task
+                    context['timer_started'] = True
+                    await self.context_manager.set_context(match_id, context)
                     
                     return  # Ne pas pousser maintenant
             

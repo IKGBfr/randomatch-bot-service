@@ -32,6 +32,7 @@ class PreProcessor:
     ) -> bool:
         """
         Vérifie si l'user est en train de taper
+        Plus strict : vérifie aussi la fraîcheur du typing
         
         Args:
             match_id: ID du match
@@ -46,29 +47,55 @@ class PreProcessor:
         
         for attempt in range(max_retries + 1):
             try:
-                # Récupérer événement typing
-                result = await self.supabase.select(
-                    'typing_events',
-                    filters={'user_id': user_id, 'match_id': match_id}
-                )
+                # Récupérer événement typing avec SQL direct pour fraîcheur
+                query = """
+                    SELECT is_typing, updated_at
+                    FROM typing_events
+                    WHERE match_id = $1 AND user_id = $2
+                    LIMIT 1
+                """
+                result = await self.supabase.fetch_one(query, match_id, user_id)
                 
-                if result and len(result) > 0:
-                    typing_event = result[0]
-                    is_typing = typing_event.get('is_typing', False)
+                if result:
+                    is_typing = result['is_typing']
+                    updated_at = result['updated_at']
                     
-                    if is_typing and attempt < max_retries:
-                        logger.info(f"   ⌛ User tape encore (vérif {attempt+1}/{max_retries+1})")
-                        await asyncio.sleep(self.TYPING_CHECK_DELAY)
-                        continue
+                    # Vérifier que le typing est récent (< 5 secondes)
+                    if is_typing and updated_at:
+                        from datetime import timezone, timedelta
+                        now = datetime.now(timezone.utc)
+                        
+                        # Convertir updated_at si nécessaire
+                        if isinstance(updated_at, str):
+                            typing_time = datetime.fromisoformat(str(updated_at).replace('Z', '+00:00'))
+                        else:
+                            typing_time = updated_at.replace(tzinfo=timezone.utc) if updated_at.tzinfo is None else updated_at
+                        
+                        # Si typing récent (< 5s), c'est actif
+                        if (now - typing_time) < timedelta(seconds=5):
+                            if attempt < max_retries:
+                                logger.info(f"   ⌛ User tape ACTIVEMENT (updated {(now - typing_time).seconds}s ago, check {attempt+1}/{max_retries+1})")
+                                await asyncio.sleep(self.TYPING_CHECK_DELAY)
+                                continue
+                            else:
+                                logger.info(f"   ⚠️ User toujours en train de taper après {max_retries} checks")
+                                return True
+                        else:
+                            # Typing trop vieux, considéré comme inactif
+                            logger.info(f"   ℹ️ Typing event trop ancien ({(now - typing_time).seconds}s), considéré inactif")
+                            return False
                     
-                    return is_typing
+                    # is_typing = False
+                    return False
                 
+                # Pas de typing event trouvé
                 return False
                 
             except Exception as e:
                 logger.error(f"❌ Erreur check typing: {e}")
                 return False
         
+        # Après toutes les vérifications
         return False
     
     async def fetch_conversation_history(

@@ -236,11 +236,23 @@ TA RÉPONSE:"""
             )
             
             if context['is_typing']:
-                # User tape encore, repousser le job
-                logger.info("⏸️  User tape encore, on repousse le job (3s)...")
-                await asyncio.sleep(3)
-                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                return
+                # User tape encore, ABANDON TOTAL
+                logger.info("⚠️ User tape encore → ABANDON COMPLET")
+                logger.info("   Message sera traité quand user aura fini")
+                
+                # Attendre 5s avant de repousser pour éviter spam
+                await asyncio.sleep(5)
+                
+                # Ajouter un compteur de retry pour éviter boucle infinie
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                    logger.info(f"📨 Message repoussé dans queue (retry {event_data['retry_count']}/5)")
+                else:
+                    logger.warning("❌ Trop de retry, abandon définitif")
+                
+                return  # STOP COMPLET
             
             # =============================
             # PHASE 2: ANALYSE
@@ -280,16 +292,30 @@ TA RÉPONSE:"""
             )
             
             if is_still_typing:
-                logger.info("⏸️  User tape encore ! Repousse du job...")
-                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                return
+                logger.info("⚠️ User ENCORE en train de taper → ABANDON")
+                
+                # Attendre plus longtemps cette fois
+                await asyncio.sleep(10)
+                
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                    logger.info(f"📨 Re-tentative plus tard (retry {event_data['retry_count']}/5)")
+                else:
+                    logger.warning("❌ Abandon définitif après 5 retry")
+                return  # STOP
             
             # Vérifier nouveaux messages depuis le début
             fresh_history = await self.pre_processor.fetch_conversation_history(match_id)
             if len(fresh_history) > len(context['history']):
-                logger.info(f"🆕 Nouveaux messages détectés ! Repousse du job...")
-                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                return
+                logger.info(f"🆕 Nouveaux messages détectés ({len(fresh_history) - len(context['history'])} nouveaux)")
+                logger.info("   → ABANDON, traiter tous les messages ensemble")
+                
+                await asyncio.sleep(3)  # Court délai
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                return  # STOP
             
             logger.info("✅ OK pour générer")
             
