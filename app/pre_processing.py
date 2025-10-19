@@ -21,13 +21,14 @@ class PreProcessor:
     def __init__(self, supabase: SupabaseClient):
         self.supabase = supabase
         self.MAX_HISTORY_MESSAGES = 50
-        self.TYPING_CHECK_DELAY = 2  # Secondes
+        self.TYPING_CHECK_DELAY = 3  # Secondes - attendre plus longtemps
+        self.MAX_TYPING_CHECKS = 3  # Vérifier 3 fois maximum
     
     async def check_user_typing(
         self,
         match_id: str,
         user_id: str,
-        max_retries: int = 1
+        max_retries: int = None
     ) -> bool:
         """
         Vérifie si l'user est en train de taper
@@ -35,11 +36,14 @@ class PreProcessor:
         Args:
             match_id: ID du match
             user_id: ID de l'utilisateur
-            max_retries: Nombre de re-vérifications
+            max_retries: Nombre de re-vérifications (default: MAX_TYPING_CHECKS)
             
         Returns:
             True si user tape encore, False sinon
         """
+        if max_retries is None:
+            max_retries = self.MAX_TYPING_CHECKS
+        
         for attempt in range(max_retries + 1):
             try:
                 # Récupérer événement typing
@@ -53,6 +57,7 @@ class PreProcessor:
                     is_typing = typing_event.get('is_typing', False)
                     
                     if is_typing and attempt < max_retries:
+                        logger.info(f"   ⌛ User tape encore (vérif {attempt+1}/{max_retries+1})")
                         await asyncio.sleep(self.TYPING_CHECK_DELAY)
                         continue
                     

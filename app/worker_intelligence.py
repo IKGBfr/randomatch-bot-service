@@ -237,10 +237,9 @@ TA RÉPONSE:"""
             
             if context['is_typing']:
                 # User tape encore, repousser le job
-                logger.info("⏸️  User tape, on repousse le job...")
-                await asyncio.sleep(2)
+                logger.info("⏸️  User tape encore, on repousse le job (3s)...")
+                await asyncio.sleep(3)
                 await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                return
                 return
             
             # =============================
@@ -273,6 +272,26 @@ TA RÉPONSE:"""
             logger.info(f"   Délai réflexion: {thinking_delay}s")
             logger.info(f"⏳ Attente {thinking_delay}s (temps de réflexion)...")
             await asyncio.sleep(thinking_delay)
+            
+            # RE-VÉRIFIER : User tape-t-il encore ? Nouveaux messages ?
+            logger.info("\n🔍 Vérification finale avant génération...")
+            is_still_typing = await self.pre_processor.check_user_typing(
+                match_id, user_id, max_retries=1  # Vérif rapide
+            )
+            
+            if is_still_typing:
+                logger.info("⏸️  User tape encore ! Repousse du job...")
+                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                return
+            
+            # Vérifier nouveaux messages depuis le début
+            fresh_history = await self.pre_processor.fetch_conversation_history(match_id)
+            if len(fresh_history) > len(context['history']):
+                logger.info(f"🆕 Nouveaux messages détectés ! Repousse du job...")
+                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                return
+            
+            logger.info("✅ OK pour générer")
             
             # =============================
             # PHASE 4: ACTIVATION TYPING
