@@ -185,11 +185,21 @@ class PreProcessor:
                 'topics_to_avoid': []
             }
         
+        # Calculer temps depuis dernier message bot
+        time_since_last_bot_minutes = 999  # Default: très longtemps
+        for msg in reversed(history):
+            if msg.get('profiles', {}).get('is_bot'):
+                last_bot_time = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
+                time_diff = datetime.now().astimezone() - last_bot_time
+                time_since_last_bot_minutes = time_diff.total_seconds() / 60
+                break
+        
         logger.info(f"✅ Contexte prêt ({len(history)} msgs, trust={memory.get('trust_score', 0)})")
         
         return {
             'is_typing': is_typing,
             'history': history,
             'memory': memory,
-            'bot_profile': bot_profile
+            'bot_profile': bot_profile,
+            'time_since_last_bot_minutes': time_since_last_bot_minutes
         }
