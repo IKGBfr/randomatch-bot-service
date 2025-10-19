@@ -33,9 +33,16 @@ class MatchMonitor:
         self.MAX_DELAY_MINUTES = Config.MAX_DELAY_MINUTES
         
         # HTTP headers pour REST API
+        # Debug: vérifier clé présente
+        service_key = Config.SUPABASE_SERVICE_KEY
+        if not service_key:
+            logger.error("❌ SUPABASE_SERVICE_KEY non définie dans Config!")
+        else:
+            logger.info(f"🔑 Service key chargée: {service_key[:20]}...")
+        
         self.rest_headers = {
-            "apikey": Config.SUPABASE_SERVICE_KEY,
-            "Authorization": f"Bearer {Config.SUPABASE_SERVICE_KEY}",
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
             "Content-Type": "application/json",
             "Prefer": "return=representation"
         }
