@@ -82,16 +82,41 @@ class PreProcessor:
         logger.info("📦 Chargement contexte complet...")
         
         try:
-            # Charger messages avec profils
-            messages = await self.supabase.select(
-                'messages',
-                columns='id,content,sender_id,created_at,type,profiles!messages_sender_id_fkey(first_name,is_bot)',
-                filters={'match_id': match_id},
-                order='created_at.asc',
-                limit=self.MAX_HISTORY_MESSAGES
-            )
+            # Utiliser SQL brut avec JOIN pour asyncpg
+            query = """
+                SELECT 
+                    m.id,
+                    m.content,
+                    m.sender_id,
+                    m.created_at,
+                    m.type,
+                    p.first_name,
+                    p.is_bot
+                FROM messages m
+                LEFT JOIN profiles p ON m.sender_id = p.id
+                WHERE m.match_id = $1
+                ORDER BY m.created_at ASC
+                LIMIT $2
+            """
             
-            return messages if messages else []
+            messages = await self.supabase.fetch(query, match_id, self.MAX_HISTORY_MESSAGES)
+            
+            # Transformer en format attendu
+            result = []
+            for msg in messages:
+                result.append({
+                    'id': str(msg['id']),
+                    'content': msg['content'],
+                    'sender_id': str(msg['sender_id']),
+                    'created_at': msg['created_at'],  # Déjà un datetime object
+                    'type': msg['type'],
+                    'profiles': {
+                        'first_name': msg['first_name'],
+                        'is_bot': msg['is_bot']
+                    }
+                })
+            
+            return result
             
         except Exception as e:
             logger.error(f"❌ Erreur fetch history: {e}")
@@ -144,7 +169,16 @@ class PreProcessor:
                 filters={'id': bot_id}
             )
             
-            return result[0] if result and len(result) > 0 else None
+            if result and len(result) > 0:
+                profile = result[0]
+                # Convertir Decimal en float
+                if 'temperature' in profile and profile['temperature'] is not None:
+                    from decimal import Decimal
+                    if isinstance(profile['temperature'], Decimal):
+                        profile['temperature'] = float(profile['temperature'])
+                return profile
+            
+            return None
             
         except Exception as e:
             logger.error(f"❌ Erreur fetch bot profile: {e}")
@@ -197,7 +231,19 @@ class PreProcessor:
         time_since_last_bot_minutes = 999  # Default: très longtemps
         for msg in reversed(history):
             if msg.get('profiles', {}).get('is_bot'):
-                last_bot_time = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
+                last_bot_time = msg['created_at']
+                # Si c'est un string ISO, convertir en datetime
+                if isinstance(last_bot_time, str):
+                    last_bot_time = datetime.fromisoformat(last_bot_time.replace('Z', '+00:00'))
+                # Si déjà datetime, utiliser directement
+                elif not isinstance(last_bot_time, datetime):
+                    continue
+                    
+                # S'assurer que last_bot_time est timezone-aware
+                if last_bot_time.tzinfo is None:
+                    from datetime import timezone
+                    last_bot_time = last_bot_time.replace(tzinfo=timezone.utc)
+                    
                 time_diff = datetime.now().astimezone() - last_bot_time
                 time_since_last_bot_minutes = time_diff.total_seconds() / 60
                 break

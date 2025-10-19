@@ -174,6 +174,24 @@ class SupabaseClient:
             logger.error(f"❌ Erreur UPDATE {table}: {e}")
             return False
     
+    async def fetch(
+        self,
+        query: str,
+        *params
+    ) -> List[Dict]:
+        """Exécuter une requête SQL brute"""
+        try:
+            if not self.pool:
+                await self.connect()
+            
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur FETCH: {e}")
+            return []
+    
     async def close(self):
         """Fermer le pool"""
         if self.pool:
