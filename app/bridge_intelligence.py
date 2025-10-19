@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict
 from app.config import settings
 from app.redis_context import RedisContextManager
+from app.match_monitor import MatchMonitor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class BridgeIntelligence:
         self.pg_conn = None
         self.redis_client = None
         self.context_manager = None
+        self.match_monitor = None
         self.running = False
         self.GROUPING_DELAY = 3  # Secondes
         
@@ -43,6 +45,7 @@ class BridgeIntelligence:
             decode_responses=True
         )
         self.context_manager = RedisContextManager(self.redis_client)
+        self.match_monitor = MatchMonitor()
         logger.info("✅ Connecté à Redis")
     
     async def push_to_queue(self, message: Dict):
@@ -115,13 +118,33 @@ class BridgeIntelligence:
         except Exception as e:
             logger.error(f"❌ Erreur notification: {e}")
     
+    async def handle_new_match(self, connection, pid, channel, payload):
+        """
+        Callback PostgreSQL NOTIFY pour nouveaux matchs
+        """
+        try:
+            logger.info(f"🔍 Nouveau match détecté")
+            
+            match_data = json.loads(payload)
+            
+            # Appeler match_monitor pour traiter le nouveau match
+            await self.match_monitor.process_new_match(
+                match_id=match_data['id'],
+                bot_id=match_data.get('user1_id') if match_data.get('user2_id') in [settings.bot_camille_id, settings.bot_paul_id] else match_data.get('user2_id'),
+                user_id=match_data.get('user2_id') if match_data.get('user1_id') in [settings.bot_camille_id, settings.bot_paul_id] else match_data.get('user1_id')
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur nouveau match: {e}")
+    
     async def start_listening(self):
         """Démarre l'écoute PostgreSQL"""
-        logger.info("👂 Démarrage écoute 'bot_events'...")
+        logger.info("👂 Démarrage écoute 'bot_events' et 'new_match'...")
         
         await self.pg_conn.add_listener('bot_events', self.handle_notification)
+        await self.pg_conn.add_listener('new_match', self.handle_new_match)
         
-        logger.info("✅ Écoute active (avec grouping intelligent)")
+        logger.info("✅ Écoute active (messages + nouveaux matchs)")
         logger.info("⏳ En attente...")
         
         self.running = True
@@ -139,6 +162,7 @@ class BridgeIntelligence:
         
         if self.pg_conn:
             await self.pg_conn.remove_listener('bot_events', self.handle_notification)
+            await self.pg_conn.remove_listener('new_match', self.handle_new_match)
             await self.pg_conn.close()
             
         if self.redis_client:
