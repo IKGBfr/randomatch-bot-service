@@ -134,12 +134,9 @@ class BridgeIntelligence:
             
             match_data = json.loads(payload)
             
-            # Appeler match_monitor pour traiter le nouveau match
-            await self.match_monitor.process_new_match(
-                match_id=match_data['id'],
-                bot_id=match_data.get('user1_id') if match_data.get('user2_id') in [settings.bot_camille_id, settings.bot_paul_id] else match_data.get('user2_id'),
-                user_id=match_data.get('user2_id') if match_data.get('user1_id') in [settings.bot_camille_id, settings.bot_paul_id] else match_data.get('user1_id')
-            )
+            # Passer le Dict complet à match_monitor
+            # Il identifiera lui-même qui est le bot
+            await self.match_monitor.process_new_match(match_data)
             
         except Exception as e:
             logger.error(f"❌ Erreur nouveau match: {e}")
