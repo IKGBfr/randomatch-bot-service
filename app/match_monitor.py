@@ -5,9 +5,9 @@ Décide si le bot envoie le premier message (40-60%) et planifie l'envoi.
 import logging
 import asyncio
 import random
+import httpx
 from datetime import datetime, timedelta
 from typing import Dict, Optional
-from supabase import Client
 
 from app.initiation_builder import InitiationBuilder
 from app.config import Config
@@ -17,8 +17,12 @@ logger = logging.getLogger(__name__)
 class MatchMonitor:
     """Surveille les nouveaux matchs et crée des initiations bot"""
     
-    def __init__(self, supabase: Client):
-        self.supabase = supabase
+    def __init__(self, supabase_client):
+        """
+        Args:
+            supabase_client: Notre SupabaseClient custom (asyncpg)
+        """
+        self.supabase = supabase_client
         self.initiation_builder = InitiationBuilder()
         
         # Probabilité d'initiation (configurable)
@@ -27,6 +31,14 @@ class MatchMonitor:
         # Délais (configurable, immédiat en test)
         self.MIN_DELAY_MINUTES = Config.MIN_DELAY_MINUTES
         self.MAX_DELAY_MINUTES = Config.MAX_DELAY_MINUTES
+        
+        # HTTP headers pour REST API
+        self.rest_headers = {
+            "apikey": Config.SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_SERVICE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
     
     async def process_new_match(self, match: Dict) -> Optional[str]:
         """
@@ -129,26 +141,41 @@ class MatchMonitor:
         return delay
     
     async def _load_profile(self, profile_id: str) -> Dict:
-        """Charge un profil complet depuis Supabase"""
+        """Charge un profil complet via REST API"""
         try:
-            response = self.supabase.table('profiles').select(
-                'id, first_name, birth_date, bio, city, department, '
-                'hiking_level, photos'
-            ).eq('id', profile_id).single().execute()
-            
-            profile = response.data
-            
-            # Charger intérêts
-            interests_response = self.supabase.table('user_interests').select(
-                'interests(name)'
-            ).eq('user_id', profile_id).execute()
-            
-            profile['interests'] = [
-                i['interests']['name'] 
-                for i in interests_response.data
-            ] if interests_response.data else []
-            
-            return profile
+            async with httpx.AsyncClient() as client:
+                # Profile
+                url = f"{Config.SUPABASE_URL}/rest/v1/profiles"
+                params = {
+                    "id": f"eq.{profile_id}",
+                    "select": "id,first_name,birth_date,bio,city,department,hiking_level,photos"
+                }
+                resp = await client.get(url, headers=self.rest_headers, params=params)
+                resp.raise_for_status()
+                profiles = resp.json()
+                
+                if not profiles:
+                    raise ValueError(f"Profile {profile_id} not found")
+                
+                profile = profiles[0]
+                
+                # Interests
+                url = f"{Config.SUPABASE_URL}/rest/v1/user_interests"
+                params = {
+                    "user_id": f"eq.{profile_id}",
+                    "select": "interests(name)"
+                }
+                resp = await client.get(url, headers=self.rest_headers, params=params)
+                resp.raise_for_status()
+                interests_data = resp.json()
+                
+                profile['interests'] = [
+                    i['interests']['name'] 
+                    for i in interests_data
+                    if i.get('interests')
+                ]
+                
+                return profile
             
         except Exception as e:
             logger.error(f"Erreur load_profile {profile_id}: {e}")
@@ -166,18 +193,28 @@ class MatchMonitor:
         scheduled_for: datetime,
         first_message: str
     ) -> str:
-        """Crée une entrée dans bot_initiations"""
+        """Crée une entrée dans bot_initiations via REST API"""
         try:
-            response = self.supabase.table('bot_initiations').insert({
-                'match_id': match_id,
-                'bot_id': bot_id,
-                'user_id': user_id,
-                'scheduled_for': scheduled_for.isoformat(),
-                'first_message': first_message,
-                'status': 'pending'
-            }).execute()
-            
-            return response.data[0]['id']
+            async with httpx.AsyncClient() as client:
+                url = f"{Config.SUPABASE_URL}/rest/v1/bot_initiations"
+                payload = {
+                    'match_id': match_id,
+                    'bot_id': bot_id,
+                    'user_id': user_id,
+                    'scheduled_for': scheduled_for.isoformat(),
+                    'first_message': first_message,
+                    'status': 'pending'
+                }
+                
+                resp = await client.post(
+                    url, 
+                    headers=self.rest_headers, 
+                    json=payload
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                
+                return result[0]['id']
             
         except Exception as e:
             logger.error(f"Erreur create_initiation: {e}")
@@ -186,67 +223,96 @@ class MatchMonitor:
     async def check_pending_initiations(self):
         """
         Vérifie les initiations en attente et envoie celles dont l'heure est venue.
-        À appeler régulièrement (ex: toutes les minutes).
+        À appeler régulièrement (ex: toutes les 30s).
         """
         try:
-            # Chercher initiations pending dont scheduled_for <= now
-            response = self.supabase.table('bot_initiations').select(
-                '*'
-            ).eq('status', 'pending').lte(
-                'scheduled_for', datetime.now().isoformat()
-            ).execute()
-            
-            pending = response.data
-            
-            if not pending:
-                return
-            
-            logger.info(f"📬 {len(pending)} initiation(s) à envoyer")
-            
-            for initiation in pending:
-                await self._send_initiation(initiation)
+            async with httpx.AsyncClient() as client:
+                url = f"{Config.SUPABASE_URL}/rest/v1/bot_initiations"
+                params = {
+                    "status": "eq.pending",
+                    "scheduled_for": f"lte.{datetime.now().isoformat()}",
+                    "select": "*"
+                }
+                
+                resp = await client.get(url, headers=self.rest_headers, params=params)
+                resp.raise_for_status()
+                pending = resp.json()
+                
+                if not pending:
+                    return
+                
+                logger.info(f"📬 {len(pending)} initiation(s) à envoyer")
+                
+                for initiation in pending:
+                    await self._send_initiation(initiation)
                 
         except Exception as e:
             logger.error(f"❌ Erreur check_pending_initiations: {e}")
     
     async def _send_initiation(self, initiation: Dict):
-        """Envoie le premier message et met à jour l'initiation"""
+        """Envoie le premier message et met à jour l'initiation via REST API"""
         try:
-            # Vérifier si user a déjà envoyé un message
-            messages_response = self.supabase.table('messages').select(
-                'id'
-            ).eq('match_id', initiation['match_id']).eq(
-                'sender_id', initiation['user_id']
-            ).limit(1).execute()
-            
-            if messages_response.data:
-                # User a envoyé en premier, annuler initiation
-                logger.info(f"🚫 Initiation {initiation['id']} annulée (user a envoyé)")
+            async with httpx.AsyncClient() as client:
+                # Vérifier si user a déjà envoyé un message
+                url = f"{Config.SUPABASE_URL}/rest/v1/messages"
+                params = {
+                    "match_id": f"eq.{initiation['match_id']}",
+                    "sender_id": f"eq.{initiation['user_id']}",
+                    "select": "id",
+                    "limit": "1"
+                }
                 
-                self.supabase.table('bot_initiations').update({
-                    'status': 'cancelled'
-                }).eq('id', initiation['id']).execute()
+                resp = await client.get(url, headers=self.rest_headers, params=params)
+                resp.raise_for_status()
+                messages = resp.json()
                 
-                return
-            
-            # Envoyer le message
-            message_response = self.supabase.table('messages').insert({
-                'match_id': initiation['match_id'],
-                'sender_id': initiation['bot_id'],
-                'content': initiation['first_message'],
-                'status': 'sent'
-            }).execute()
-            
-            # Update initiation status
-            self.supabase.table('bot_initiations').update({
-                'status': 'sent',
-                'sent_at': datetime.now().isoformat()
-            }).eq('id', initiation['id']).execute()
-            
-            logger.info(
-                f"✅ Premier message envoyé : {initiation['id']}\n"
-                f"   Message: {initiation['first_message']}"
-            )
+                if messages:
+                    # User a envoyé en premier, annuler initiation
+                    logger.info(f"🚫 Initiation {initiation['id']} annulée (user a envoyé)")
+                    
+                    url = f"{Config.SUPABASE_URL}/rest/v1/bot_initiations"
+                    params = {"id": f"eq.{initiation['id']}"}
+                    payload = {"status": "cancelled"}
+                    
+                    await client.patch(
+                        url, 
+                        headers=self.rest_headers, 
+                        params=params,
+                        json=payload
+                    )
+                    
+                    return
+                
+                # Envoyer le message
+                url = f"{Config.SUPABASE_URL}/rest/v1/messages"
+                payload = {
+                    'match_id': initiation['match_id'],
+                    'sender_id': initiation['bot_id'],
+                    'content': initiation['first_message'],
+                    'status': 'sent'
+                }
+                
+                await client.post(url, headers=self.rest_headers, json=payload)
+                
+                # Update initiation status
+                url = f"{Config.SUPABASE_URL}/rest/v1/bot_initiations"
+                params = {"id": f"eq.{initiation['id']}"}
+                payload = {
+                    'status': 'sent',
+                    'sent_at': datetime.now().isoformat()
+                }
+                
+                await client.patch(
+                    url,
+                    headers=self.rest_headers,
+                    params=params,
+                    json=payload
+                )
+                
+                logger.info(
+                    f"✅ Premier message envoyé : {initiation['id']}\n"
+                    f"   Message: {initiation['first_message']}"
+                )
             
         except Exception as e:
             logger.error(f"❌ Erreur send_initiation {initiation['id']}: {e}")

@@ -19,25 +19,8 @@ logger = logging.getLogger(__name__)
 
 async def check_pending_initiations_loop(supabase_client):
     """Boucle qui vérifie les initiations en attente toutes les 30s"""
-    # Import ici pour éviter circular import
-    from supabase import create_client
-    
-    # Debug: vérifier la clé
-    service_key = settings.supabase_service_key
-    if not service_key:
-        logger.error("❌ SUPABASE_SERVICE_KEY non définie !")
-        return
-    
-    logger.info(f"🔑 Service key présente : {service_key[:20]}...")
-    
-    # Créer client Supabase standard pour match_monitor
-    # La service_role key gère automatiquement les permissions
-    supabase_std = create_client(
-        settings.supabase_url,
-        service_key
-    )
-    
-    monitor = MatchMonitor(supabase_std)
+    # Utiliser notre SupabaseClient custom (comme worker_intelligence)
+    monitor = MatchMonitor(supabase_client)
     logger.info("🔍 Initiation Checker démarré (toutes les 30s)")
     
     while True:

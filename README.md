@@ -1,49 +1,51 @@
-# 🤖 RandoMatch Bot Service - Intelligence Conversationnelle
+# 🤖 RandoMatch Bot Service
 
-> Service Python autonome avec intelligence conversationnelle avancée
+> Service Python autonome pour gérer les conversations IA dans RandoMatch
 
-Bot qui répond comme un humain dans RandoMatch. Architecture Railway + Redis + PostgreSQL NOTIFY avec **grouping intelligent**, **détection typing**, et **timing adaptatif**.
+Bot conversationnel qui répond comme un humain dans l'app de dating pour randonneurs RandoMatch. Architecture professionnelle avec Railway + Redis + PostgreSQL NOTIFY.
 
 ---
 
-## 🏗️ Architecture Intelligence
+## 🏗️ Architecture
 
 ```
 Flutter Web (Vercel)
        ↕️
 Supabase PostgreSQL + Realtime
        ↕️ PostgreSQL NOTIFY
-🧠 Bridge Intelligence (Railway)
-   - Grouping messages rapides
-   - Context Redis éphémère
+Bridge Python (Railway) ← Always running
        ↕️
 Redis Queue (Upstash)
        ↕️
-🧠 Worker Intelligence (Railway)
-   - Check typing user
-   - Load full history
-   - Load bot_memory
-   - Analyse context
-   - Timing adaptatif
+Worker Python (Railway) ← Processes messages
        ↕️
 OpenRouter API (Grok 4 Fast)
 ```
 
-**Fonctionnalités Intelligence :**
-- ✅ **Grouping** : Messages rapides (<3s) groupés automatiquement
-- ✅ **Typing detection** : Attend si user tape encore
-- ✅ **Full history** : Charge 50 derniers messages
-- ✅ **Memory** : Utilise bot_memory (trust_score, topics, etc.)
-- ✅ **Timing adaptatif** : Délais selon urgency/complexity
-- ✅ **Multi-messages** : Peut envoyer 2-3 messages naturellement
+**Principes :**
+- Réaction instantanée via PostgreSQL NOTIFY (<100ms)
+- Queue Redis pour fiabilité (messages en sécurité)
+- Pas de timeout (vs 60s edge functions)
+- Retry automatique si API échoue
+- Comportements humains : timing naturel, typing indicator, messages multiples
 
 ---
 
 ## 🚀 Quick Start
 
+### Prérequis
+- Python 3.11+
+- Compte Railway.app
+- Compte Upstash.com (Redis)
+- Credentials Supabase
+
 ### Installation Locale
 
 ```bash
+# Clone
+git clone https://github.com/ton-username/randomatch-bot-service.git
+cd randomatch-bot-service
+
 # Virtual env
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
@@ -51,229 +53,237 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # Dépendances
 pip install -r requirements.txt
 
-# Configuration
+# Variables d'environnement
 cp .env.example .env
 # Éditer .env avec tes credentials
-
-# Test Phase 1
-python -m app.test_grouping
 ```
 
-### Lancer en Local
+### Déploiement Railway
+
+1. Push sur GitHub
+2. Railway.app → New Project → Deploy from GitHub
+3. Sélectionner ce repo
+4. Ajouter variables d'environnement (voir ci-dessous)
+5. Deploy automatique ! ✨
+
+---
+
+## 🔧 Configuration
+
+### Variables d'Environnement
 
 ```bash
-# Terminal 1: Bridge Intelligence
-python -m app.bridge_intelligence
+# Supabase
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJhbG...  # Service role key
+POSTGRES_CONNECTION_STRING=postgresql://postgres:password@db.xxxxx.supabase.co:5432/postgres
 
-# Terminal 2: Worker (quand prêt)
-python -m app.worker_intelligence
+# Redis (Upstash)
+REDIS_URL=redis://default:password@xxx.upstash.io:6379
+
+# OpenRouter
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# Bot Config
+BOT_ID=uuid-du-bot-camille
+TYPING_SPEED_CPS=3.5  # Caractères par seconde
+MIN_THINKING_DELAY=3  # Secondes
+MAX_THINKING_DELAY=15
 ```
 
 ---
 
-## 📁 Structure Intelligence
+## 📁 Structure du Projet
 
 ```
 randomatch-bot-service/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py                  # Config centralisée
-│   │
-│   ├── bridge_intelligence.py     # 🆕 Bridge avec grouping
-│   ├── redis_context.py           # 🆕 Gestion contexte Redis
-│   │
-│   ├── worker_intelligence.py     # 🆕 Worker intelligent (TODO)
-│   ├── pre_processing.py          # 🆕 Check typing, load (TODO)
-│   ├── timing_engine.py           # 🆕 Délais adaptatifs (TODO)
-│   ├── analysis.py                # 🆕 Analyse message (TODO)
-│   ├── prompt_builder.py          # 🆕 Construire prompts (TODO)
-│   ├── memory_manager.py          # 🆕 Update mémoire (TODO)
-│   │
-│   └── test_grouping.py           # Test grouping intelligent
-│
-├── Procfile                       # Railway config
-└── requirements.txt
+│   ├── config.py           # Configuration env vars
+│   ├── bridge.py           # Écoute PostgreSQL NOTIFY
+│   ├── worker.py           # Traite messages de Redis
+│   ├── generator.py        # Appelle OpenRouter/Grok
+│   ├── supabase_client.py  # INSERT messages
+│   └── timing.py           # Calculs délais humains
+├── Procfile                # Définit processus Railway
+├── requirements.txt        # Dépendances Python
+├── .env.example            # Template variables
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## 🧪 Tests Phase 1
+## 🎯 Fonctionnement
 
-### Test Grouping Intelligent
+### 1. Détection Message (Bridge)
 
-```bash
-python -m app.test_grouping
+```python
+# app/bridge.py
+# Écoute PostgreSQL NOTIFY 24/7
+await pg_conn.add_listener('bot_events', handle_notification)
+
+# Quand message arrive
+async def handle_notification(payload):
+    await redis_client.rpush('bot_messages', payload)
 ```
 
-**Ce que ça teste :**
-1. Message unique → Passe immédiatement
-2. 3 messages rapides (<3s) → Groupés après 3s
-3. Contexte Redis créé/supprimé correctement
+### 2. Traitement (Worker)
 
-**Vérifications manuelles :**
+```python
+# app/worker.py
+while True:
+    # Attend message (bloquant)
+    message = redis.blpop('bot_messages', timeout=1)
+    
+    if message:
+        # 1. Calculer délai réflexion
+        delay = calculate_thinking_delay(message)
+        await sleep(delay)
+        
+        # 2. Activer typing
+        activate_typing(bot_id, match_id)
+        
+        # 3. Générer réponse
+        response = generate_response(message)
+        
+        # 4. Simuler frappe
+        typing_time = calculate_typing_time(response)
+        await sleep(typing_time)
+        
+        # 5. Envoyer
+        send_message(match_id, bot_id, response)
+        deactivate_typing(bot_id, match_id)
+```
+
+### 3. Génération IA
+
+```python
+# app/generator.py
+client = openai.OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_KEY
+)
+
+response = client.chat.completions.create(
+    model="x-ai/grok-4-fast",
+    messages=[
+        {"role": "system", "content": bot_personality},
+        {"role": "user", "content": user_message}
+    ],
+    temperature=0.8
+)
+```
+
+---
+
+## 🧪 Tests
+
 ```bash
-# Voir logs bridge
+# Test local bridge
+python -m app.bridge
+
+# Test local worker
+python -m app.worker
+
+# Test génération
+python -m app.generator
+```
+
+---
+
+## 📊 Monitoring
+
+### Logs Railway
+```bash
 railway logs --tail
+```
 
-# Vérifier Redis
+### Vérifier Redis
+```bash
 redis-cli -h xxx.upstash.io -p 6379 -a password
-LLEN bot_messages      # Voir nombre messages
-KEYS context:*         # Voir contextes actifs
+LLEN bot_messages  # Nombre messages en attente
 ```
 
----
-
-## 📊 Phases d'Implémentation
-
-### ✅ Phase 1 : Bridge Intelligence (TERMINÉ)
-- [x] `redis_context.py` - Gestion contexte
-- [x] `bridge_intelligence.py` - Grouping intelligent
-- [x] `test_grouping.py` - Tests
-- [x] `Procfile` - Config Railway
-
-**Fonctionnel :**
-- Messages uniques → Queue immédiat
-- Messages rapides → Grouping 3s
-- Context Redis avec TTL 10s
-
-### ✅ Phase 2 : Worker Intelligence (TERMINÉ)
-- [x] `utils/timing.py` - Timing Engine
-- [x] `analysis.py` - Analyse contextuelle
-- [x] `pre_processing.py` - Check typing, load context
-- [x] `worker_intelligence.py` - Orchestration complète
-
-**Fonctionnel :**
-- Check user typing avant réponse
-- Load full history (50 messages)
-- Load bot_memory
-- Analyse urgency/complexity/tone
-- Timing adaptatif (2-15s)
-- Multi-messages naturels
-- Typing indicator avec simulation frappe
-
-### ⏳ Phase 3 : Prompt Building
-- [ ] `prompt_builder.py` - Construction prompts
-- [ ] `context_manager.py` - Gestion historique
-
-### ⏳ Phase 4 : Memory Updates
-- [ ] `memory_manager.py` - Updates bot_memory
-
-### ⏳ Phase 5 : Production
-- [ ] Tests charge
-- [ ] Fine-tuning
-- [ ] Monitoring
-
----
-
-## 🔧 Configuration Avancée
-
-### Redis Context
-
-**Keys utilisées :**
-```
-context:{match_id}          # Grouping context (TTL 10s)
-typing:{match_id}:{user_id} # Typing cache (TTL 5s)
-bot_messages                # Queue principale
-```
-
-### Grouping
-
-**Paramètres :**
-- `GROUPING_DELAY = 3` secondes
-- `CONTEXT_TTL = 10` secondes
-
-**Comportement :**
-1. Premier message → Passe immédiatement
-2. Message suivant < 3s → Ajouté au contexte
-3. Timer 3s démarre automatiquement
-4. Après 3s → Tous les messages groupés envoyés
+### Métriques
+- Temps de réponse moyen
+- Taux d'erreur API
+- Messages traités/heure
 
 ---
 
 ## 🐛 Debugging
 
-### Bridge pas de réponse
+### Bot ne répond pas
+
+1. Vérifier logs Railway : `railway logs --tail`
+2. Vérifier trigger SQL actif : `SELECT * FROM pg_trigger WHERE tgname = 'on_message_notify_bot'`
+3. Vérifier Redis : messages dans queue ?
+4. Vérifier credentials OpenRouter
+
+### Timing bizarre
+
+1. Ajuster `MIN_THINKING_DELAY` et `MAX_THINKING_DELAY`
+2. Ajuster `TYPING_SPEED_CPS` (3-4 réaliste)
+3. Vérifier logs : délais calculés
+
+### Réponses en double
+
+1. Vérifier un seul worker actif
+2. Vérifier Redis BLPOP (pas RPOP qui ne retire pas)
+3. Logs : même message traité 2x ?
+
+### Grok erreur
 
 ```bash
-# 1. Vérifier trigger SQL actif
-SELECT * FROM pg_trigger WHERE tgname = 'on_message_notify_bot';
+# Vérifier API key
+echo $OPENROUTER_API_KEY
 
-# 2. Vérifier logs Railway
-railway logs --tail
-
-# 3. Vérifier Redis
-redis-cli LLEN bot_messages
-```
-
-### Grouping ne fonctionne pas
-
-```bash
-# Vérifier contexte Redis
-redis-cli KEYS "context:*"
-redis-cli GET "context:uuid-du-match"
-
-# Logs bridge doivent montrer :
-# "🔄 Grouping: +1 message"
-# "📦 Grouping: 3 messages"
-```
-
----
-
-## 📚 Documentation Détaillée
-
-- [Architecture Complète](../docs/🧠%20Architecture%20Bot%20Intelligent%20Railway%20-%20RandoMatch.md)
-- [Guide de Référence](../docs/🗺️%20Guide%20de%20Référence%20-%20Bot%20RandoMatch%20avec%20Railway.md)
-- [Décisions Architecturales](../docs/📝%20Log%20des%20Décisions%20-%20Migration%20vers%20Railway.md)
-
----
-
-## 🚀 Déploiement Railway
-
-```bash
-# 1. Commit & Push
-git add .
-git commit -m "feat: Phase 1 - Bridge Intelligence avec grouping"
-git push origin main
-
-# 2. Railway déploie automatiquement
-
-# 3. Vérifier logs
-railway logs --tail
+# Test direct
+python -c "
+from openai import OpenAI
+client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key='$OPENROUTER_API_KEY')
+print(client.chat.completions.create(model='x-ai/grok-4-fast', messages=[{'role':'user','content':'test'}]))
+"
 ```
 
 ---
 
-**Status :** 🟢 Phase 2 Complete - Worker Intelligence Actif  
-**Version :** 2.1.0 - Intelligence Conversationnelle  
+## 🚀 Roadmap
+
+- [x] Phase 1 : Setup Railway basique
+- [x] Phase 2 : Bridge PostgreSQL → Redis
+- [x] Phase 3 : Bot répond (basique)
+- [x] Phase 4 : Timing humain + typing
+- [ ] Phase 5 : Celery pour robustesse
+- [ ] Phase 5 : Grouping intelligent
+- [ ] Phase 5 : Mémoire conversationnelle
+- [ ] Phase 5 : API monitoring FastAPI
+
+---
+
+## 📚 Documentation
+
+- [Guide Complet](./docs/GUIDE.md)
+- [Décisions Architecturales](./docs/DECISIONS.md)
+- [Troubleshooting](./docs/TROUBLESHOOTING.md)
+
+---
+
+## 🤝 Contribution
+
+Ce repo est privé pour le projet RandoMatch. Pour questions :
+- GitHub Issues
+- Email : [email]
+
+---
+
+## 📄 License
+
+Propriétaire - RandoMatch © 2025
+
+---
+
+**Status :** 🟢 Production  
+**Version :** 1.0.0  
 **Dernière mise à jour :** 18 octobre 2025
-
----
-
-## 🎯 Next Steps
-
-1. **Tester Phase 2** en local (voir ci-dessous)
-2. **Phase 3** : Prompt Building Avancé
-3. **Phase 4** : Memory Manager
-4. **Deploy production** quand Phase 3-4 complètes
-
-## 🧪 Test Phase 2 Complet
-
-```bash
-# Terminal 1: Bridge
-python -m app.bridge_intelligence
-
-# Terminal 2: Worker Intelligence
-python -m app.worker_intelligence
-
-# Terminal 3: Test
-python -m app.test_grouping
-```
-
-**Logs attendus :**
-- Bridge détecte notifications
-- Worker charge contexte (typing, history, memory)
-- Worker analyse message (urgency, complexity)
-- Worker calcule délais adaptatifs
-- Worker active typing, génère, envoie
-- Comportement naturel et humain
-
