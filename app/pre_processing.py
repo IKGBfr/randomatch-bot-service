@@ -185,6 +185,14 @@ class PreProcessor:
                 'topics_to_avoid': []
             }
         
+        # Créer bot_profile par défaut si inexistant
+        if not bot_profile:
+            bot_profile = {
+                'system_prompt': 'Tu es un bot conversationnel sympathique.',
+                'bot_personality': 'friendly',
+                'temperature': 0.8
+            }
+        
         # Calculer temps depuis dernier message bot
         time_since_last_bot_minutes = 999  # Default: très longtemps
         for msg in reversed(history):

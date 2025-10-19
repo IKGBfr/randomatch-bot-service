@@ -157,37 +157,37 @@ TA RÉPONSE:"""
     async def activate_typing(self, bot_id: str, match_id: str):
         """Active l'indicateur de frappe"""
         try:
-            self.supabase.table('typing_events').upsert({
+            await self.supabase.upsert('typing_events', {
                 'user_id': bot_id,
                 'match_id': match_id,
                 'is_typing': True,
                 'started_at': datetime.now().isoformat()
-            }).execute()
+            })
         except Exception as e:
             logger.error(f"❌ Erreur activate typing: {e}")
     
     async def deactivate_typing(self, bot_id: str, match_id: str):
         """Désactive l'indicateur de frappe"""
         try:
-            self.supabase.table('typing_events').upsert({
+            await self.supabase.upsert('typing_events', {
                 'user_id': bot_id,
                 'match_id': match_id,
                 'is_typing': False,
                 'updated_at': datetime.now().isoformat()
-            }).execute()
+            })
         except Exception as e:
             logger.error(f"❌ Erreur deactivate typing: {e}")
     
     async def send_message(self, match_id: str, bot_id: str, content: str):
         """Envoie un message"""
         try:
-            self.supabase.table('messages').insert({
+            await self.supabase.insert('messages', {
                 'match_id': match_id,
                 'sender_id': bot_id,
                 'content': content,
                 'type': 'text',
                 'status': 'sent'
-            }).execute()
+            })
             
             logger.info(f"✅ Message envoyé: {content[:50]}...")
             
