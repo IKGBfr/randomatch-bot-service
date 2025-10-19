@@ -20,6 +20,7 @@ from app.config import settings
 from app.pre_processing import PreProcessor
 from app.analysis import message_analyzer
 from app.utils.timing import timing_engine
+from app.exit_manager import ExitManager
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -36,6 +37,11 @@ class WorkerIntelligence:
         self.redis_client = None
         self.openai_client = None
         self.pre_processor = None
+        self.exit_manager = ExitManager(
+            min_messages=15,
+            max_messages=30,
+            exit_chance=0.05
+        )
         
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
@@ -395,6 +401,52 @@ TA RÉPONSE:"""
                     await self.activate_typing(bot_id, match_id)
             
             logger.info("\n✅ Message traité avec succès !")
+            
+            # =============================
+            # PHASE 7: VÉRIFICATION EXIT
+            # =============================
+            logger.info("\n🚪 Phase 7: Vérification exit...")
+            
+            should_exit, exit_reason = await self.exit_manager.check_should_exit(
+                match_id, 
+                self.supabase
+            )
+            
+            if should_exit:
+                logger.info(f"   ⚠️ Bot doit quitter: {exit_reason}")
+                
+                # Générer séquence de sortie
+                exit_messages = self.exit_manager.generate_exit_sequence(exit_reason)
+                
+                logger.info(f"\n📤 Envoi séquence exit ({len(exit_messages)} messages)...")
+                
+                for i, exit_msg in enumerate(exit_messages, 1):
+                    # Délai avant le message
+                    delay = exit_msg['delay']
+                    logger.info(f"   ⏳ Attente {delay}s avant msg {i}...")
+                    await asyncio.sleep(delay)
+                    
+                    # Activer typing
+                    await self.activate_typing(bot_id, match_id)
+                    
+                    # Simuler frappe
+                    typing_time = timing_engine.calculate_typing_time(exit_msg['text'])
+                    logger.info(f"   ⌨️ Frappe {typing_time}s: {exit_msg['text'][:50]}...")
+                    await asyncio.sleep(typing_time)
+                    
+                    # Envoyer
+                    await self.send_message(match_id, bot_id, exit_msg['text'])
+                    logger.info(f"   ✅ Exit message {i} envoyé")
+                    
+                    # Désactiver typing
+                    await self.deactivate_typing(bot_id, match_id)
+                
+                # Marquer comme exité
+                await self.exit_manager.mark_as_exited(match_id, exit_reason, self.supabase)
+                
+                logger.info("   🎯 Bot a quitté la conversation")
+            else:
+                logger.info("   ✅ Pas d'exit pour ce message")
             
         except Exception as e:
             logger.error(f"❌ Erreur traitement: {e}", exc_info=True)
