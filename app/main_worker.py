@@ -31,16 +31,10 @@ async def check_pending_initiations_loop(supabase_client):
     logger.info(f"🔑 Service key présente : {service_key[:20]}...")
     
     # Créer client Supabase standard pour match_monitor
-    # IMPORTANT: Headers explicites pour service_role
+    # La service_role key gère automatiquement les permissions
     supabase_std = create_client(
         settings.supabase_url,
-        service_key,
-        options={
-            "headers": {
-                "apikey": service_key,
-                "Authorization": f"Bearer {service_key}"
-            }
-        }
+        service_key
     )
     
     monitor = MatchMonitor(supabase_std)
