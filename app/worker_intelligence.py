@@ -88,7 +88,7 @@ MÉMOIRE DE CETTE PERSONNE:
         
         # Historique (derniers 30 messages max pour prompt)
         history_context = "\n".join([
-            f"{msg['sender_name']}: {msg['content']}"
+            f"{msg.get('profiles', {}).get('first_name', 'Inconnu')}: {msg['content']}"
             for msg in history[-30:]
         ])
         
@@ -162,7 +162,7 @@ TA RÉPONSE:"""
                 'user_id': bot_id,
                 'match_id': match_id,
                 'is_typing': True,
-                'started_at': datetime.now().isoformat()
+                'started_at': datetime.now()
             })
         except Exception as e:
             logger.error(f"❌ Erreur activate typing: {e}")
@@ -174,7 +174,7 @@ TA RÉPONSE:"""
                 'user_id': bot_id,
                 'match_id': match_id,
                 'is_typing': False,
-                'updated_at': datetime.now().isoformat()
+                'updated_at': datetime.now()
             })
         except Exception as e:
             logger.error(f"❌ Erreur deactivate typing: {e}")
