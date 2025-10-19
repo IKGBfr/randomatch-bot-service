@@ -19,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 async def check_pending_initiations_loop(supabase_client):
     """Boucle qui vérifie les initiations en attente toutes les 30s"""
-    # Utiliser notre SupabaseClient custom (comme worker_intelligence)
-    monitor = MatchMonitor(supabase_client)
+    monitor = MatchMonitor()  # Utilise httpx directement
     logger.info("🔍 Initiation Checker démarré (toutes les 30s)")
     
     while True:
