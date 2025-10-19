@@ -17,11 +17,12 @@ logger = logging.getLogger(__name__)
 class MatchMonitor:
     """Surveille les nouveaux matchs et crée des initiations bot"""
     
-    def __init__(self):
+    def __init__(self, supabase_client):
         """
-        MatchMonitor utilise httpx directement pour les requêtes REST.
-        Pas besoin de supabase_client.
+        Args:
+            supabase_client: Notre SupabaseClient custom (asyncpg)
         """
+        self.supabase = supabase_client
         self.initiation_builder = InitiationBuilder()
         
         # Probabilité d'initiation (configurable)

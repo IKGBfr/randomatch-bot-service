@@ -11,6 +11,7 @@ from typing import Dict
 from app.config import settings
 from app.redis_context import RedisContextManager
 from app.match_monitor import MatchMonitor
+from app.supabase_client import SupabaseClient
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class BridgeIntelligence:
         self.redis_client = None
         self.context_manager = None
         self.match_monitor = None
+        self.supabase_client = None
         self.running = False
         self.GROUPING_DELAY = 3  # Secondes
         
@@ -45,7 +47,12 @@ class BridgeIntelligence:
             decode_responses=True
         )
         self.context_manager = RedisContextManager(self.redis_client)
-        self.match_monitor = MatchMonitor()
+        
+        # Créer SupabaseClient pour match_monitor
+        self.supabase_client = SupabaseClient()
+        await self.supabase_client.connect()
+        
+        self.match_monitor = MatchMonitor(self.supabase_client)
         logger.info("✅ Connecté à Redis")
     
     async def push_to_queue(self, message: Dict):
@@ -164,6 +171,9 @@ class BridgeIntelligence:
             await self.pg_conn.remove_listener('bot_events', self.handle_notification)
             await self.pg_conn.remove_listener('new_match', self.handle_new_match)
             await self.pg_conn.close()
+        
+        if self.supabase_client:
+            await self.supabase_client.close()
             
         if self.redis_client:
             await self.redis_client.close()
