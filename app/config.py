@@ -68,3 +68,10 @@ class Config:
 
 # Instance globale pour compatibilité avec ancien code
 settings = Config()
+
+# Compatibility aliases (snake_case for backward compatibility)
+settings.postgres_connection_string = settings.POSTGRES_CONNECTION_STRING
+settings.log_level = settings.LOG_LEVEL
+settings.supabase_url = settings.SUPABASE_URL
+settings.supabase_service_key = settings.SUPABASE_SERVICE_KEY
+settings.redis_url = settings.REDIS_URL
