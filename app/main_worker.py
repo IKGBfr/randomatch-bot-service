@@ -54,14 +54,28 @@ async def main():
     
     async def message_loop():
         """Boucle traitement messages"""
-        logger.info("👂 Écoute queue 'bot_messages'...")
-        while True:
-            result = await worker.redis_client.blpop('bot_messages', timeout=1)
+        try:
+            logger.info("👂 Écoute queue 'bot_messages'...")
             
-            if result:
-                queue_name, message_json = result
-                event_data = json.loads(message_json)
-                await worker.process_message(event_data)
+            # Vérifier que Redis est connecté
+            if not worker.redis_client:
+                logger.error("❌ Redis non connecté, impossible d'écouter la queue")
+                return
+            
+            while True:
+                try:
+                    result = await worker.redis_client.blpop('bot_messages', timeout=1)
+                    
+                    if result:
+                        queue_name, message_json = result
+                        logger.info(f"📨 Message reçu de la queue: {message_json[:100]}...")
+                        event_data = json.loads(message_json)
+                        await worker.process_message(event_data)
+                except Exception as e:
+                    logger.error(f"Erreur traitement message: {e}", exc_info=True)
+                    await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"❌ Erreur fatale message_loop: {e}", exc_info=True)
     
     try:
         # Lancer en parallèle
