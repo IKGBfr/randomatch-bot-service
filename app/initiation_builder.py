@@ -72,41 +72,35 @@ class InitiationBuilder:
         bot_interests = bot_profile.get('interests', [])
         common_interests = [i for i in user_interests if i in bot_interests]
         
-        prompt = f"""Tu es {bot_name}, {bot_age} ans, passionné(e) de randonnée.
-{bot_bio}
+        prompt = f"""Tu discutes naturellement sur une app de rencontre. Profil de {user_name} :
+Bio : {user_bio}
+Intérêts : {", ".join(user_interests[:3]) if user_interests else "Aucun"}
+Niveau rando : {user_hiking_level}
 
-Tu viens de matcher avec {user_name}, {user_age} ans.
+Écris UN message d'accroche court comme tu écrirais vraiment sur ton tel. Pas construit, pas eager.
 
-PROFIL DE {user_name.upper()} :
-- Localisation : {user_city}, {user_department}
-- Niveau rando : {user_hiking_level}
-- Bio : {user_bio}
-- Intérêts : {", ".join(user_interests) if user_interests else "Non renseignés"}
+✅ OPTIONS (choisis 1) :
+1. Si sa bio a un truc cool → Réagis simplement
+2. Si intérêt commun → Mentionne-le casual
+3. Sinon → Juste "Salut {user_name} !" + question simple
 
-INTÉRÊTS COMMUNS : {", ".join(common_interests) if common_interests else "Aucun explicite"}
+❌ ÉVITE :
+- Phrases longues/construites
+- "me parle", "m'interpelle", "résonne"
+- Essayer de tout dire d'un coup
+- Trop d'enthousiasme
 
-RÈGLES POUR TON PREMIER MESSAGE :
+✅ BONS (courts, directs) :
+"Salut ! Tu cours où en général ?"
+"Hey ! Comment ça va ?"
+"Salut {user_name} ! Ça va ?"
+"Cool le trail ! Tu fais quoi comme distances ?"
+"Salut ! T'es de {user_city} ?"
+"Hey ! Tu randos où d'habitude ?"
 
-1. **PRIORITÉ : Rebondis sur SA BIO** si elle contient quelque chose d'exploitable
-2. Sinon sur un intérêt commun explicite
-3. Sinon sur son niveau de rando s'il est avancé/expert
-4. Sinon reste simple : "Salut [prénom] ! Comment ça va ?"
+Écris comme tu parlerais. 1 phrase, max 2. Décontracté.
 
-❌ NE JAMAIS :
-- Mentionner les photos
-- Dire "j'ai vu ta photo"
-- Poser une question évidente géo (ex: demander si quelqu'un du 34 connaît les gorges de l'Hérault)
-
-✅ EXEMPLES BONS :
-"Salut ! Tu fais aussi du trail ? Tu cours où en général ?"
-"Hey ! Expert en rando je vois, tu as fait quoi comme belles courses ?"
-"Salut {user_name} ! Comment ça va ?"
-
-❌ EXEMPLES MAUVAIS :
-"Belle photo !"
-"Tu connais [spot évident de ton département] ?"
-
-**Écris UN SEUL message court (max 2 phrases) :**"""
+Message :"""
 
         return prompt
     
