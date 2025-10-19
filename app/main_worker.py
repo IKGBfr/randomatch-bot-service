@@ -22,10 +22,18 @@ async def check_pending_initiations_loop(supabase_client):
     # Import ici pour éviter circular import
     from supabase import create_client
     
+    # Debug: vérifier la clé
+    service_key = settings.supabase_service_key
+    if not service_key:
+        logger.error("❌ SUPABASE_SERVICE_KEY non définie !")
+        return
+    
+    logger.info(f"🔑 Service key présente : {service_key[:20]}...")
+    
     # Créer client Supabase standard pour match_monitor
     supabase_std = create_client(
         settings.supabase_url,
-        settings.supabase_service_key
+        service_key
     )
     
     monitor = MatchMonitor(supabase_std)
