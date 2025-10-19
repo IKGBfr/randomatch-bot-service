@@ -39,7 +39,7 @@ class Config:
     DEFAULT_TEMPERATURE = 0.8
     MAX_TOKENS = 200
     
-    # Bot IDs (à récupérer depuis Supabase)
+    # Bot IDs
     BOT_CAMILLE_ID = os.getenv("BOT_CAMILLE_ID")
     BOT_PAUL_ID = os.getenv("BOT_PAUL_ID")
     
@@ -50,31 +50,65 @@ class Config:
     TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
     
     # Initiation settings
-    INITIATION_PROBABILITY = float(os.getenv("INITIATION_PROBABILITY", "0.5"))
-    MIN_DELAY_MINUTES = int(os.getenv("MIN_DELAY_MINUTES", "15"))
-    MAX_DELAY_MINUTES = int(os.getenv("MAX_DELAY_MINUTES", "360"))
-    
-    # En mode test : délai immédiat
-    if TEST_MODE:
-        MIN_DELAY_MINUTES = 0
-        MAX_DELAY_MINUTES = 1
-        INITIATION_PROBABILITY = 1.0  # 100% d'initiation en test
+    INITIATION_PROBABILITY = 1.0 if TEST_MODE else 0.5
+    MIN_DELAY_MINUTES = 0 if TEST_MODE else 15
+    MAX_DELAY_MINUTES = 1 if TEST_MODE else 360
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     
     # Environment
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+    
+    # Alias snake_case pour compatibilité
+    @property
+    def bot_camille_id(self):
+        return self.BOT_CAMILLE_ID
+    
+    @property
+    def bot_paul_id(self):
+        return self.BOT_PAUL_ID
+    
+    @property
+    def test_user_id(self):
+        return self.TEST_USER_ID
+    
+    @property
+    def test_mode(self):
+        return self.TEST_MODE
+    
+    @property
+    def supabase_url(self):
+        return self.SUPABASE_URL
+    
+    @property
+    def supabase_service_key(self):
+        return self.SUPABASE_SERVICE_KEY
+    
+    @property
+    def postgres_connection_string(self):
+        return self.POSTGRES_CONNECTION_STRING
+    
+    @property
+    def redis_url(self):
+        return self.REDIS_URL
+    
+    @property
+    def log_level(self):
+        return self.LOG_LEVEL
+    
+    @property
+    def openrouter_api_key(self):
+        return self.OPENROUTER_API_KEY
+    
+    @property
+    def openrouter_base_url(self):
+        return self.OPENROUTER_BASE_URL
+    
+    @property
+    def openrouter_model(self):
+        return self.OPENROUTER_MODEL
 
-# Instance globale pour compatibilité avec ancien code
+
+# Instance globale
 settings = Config()
-
-# Compatibility aliases (snake_case for backward compatibility)
-settings.postgres_connection_string = settings.POSTGRES_CONNECTION_STRING
-settings.log_level = settings.LOG_LEVEL
-settings.supabase_url = settings.SUPABASE_URL
-settings.supabase_service_key = settings.SUPABASE_SERVICE_KEY
-settings.redis_url = settings.REDIS_URL
-settings.openrouter_api_key = settings.OPENROUTER_API_KEY
-settings.openrouter_base_url = settings.OPENROUTER_BASE_URL
-settings.openrouter_model = settings.OPENROUTER_MODEL
