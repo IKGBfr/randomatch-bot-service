@@ -21,6 +21,11 @@ class ExitManager:
             "Je crois que j'ai trouvé quelqu'un avec qui ça match vraiment bien",
             "J'ai discuté avec quelqu'un qui a l'air cool, on va se voir bientôt",
         ],
+        'relationship_ended': [
+            "Bon ça fait un moment qu'on discute, je vais être honnête...",
+            "Je pense qu'il est temps d'être claire avec toi",
+            "Alors voilà, je vais te dire franchement",
+        ],
         'busy': [
             "Bon je vais être honnête, je suis débordée en ce moment",
             "J'ai pas trop le temps pour l'app ces jours-ci...",
@@ -49,13 +54,20 @@ class ExitManager:
         """
         Vérifie si le bot doit quitter cette conversation
         
+        Règles:
+        - Jours 1-2: Pas d'exit (laisser développer)
+        - Jour 3+: Exit direct après premier message
+        - Limite messages: Exit à 80% du max
+        
         Returns:
             (should_exit: bool, reason: str)
         """
+        from datetime import datetime, timezone, timedelta
+        
         # Récupérer stats du match
         result = await supabase.fetch_one(
             """
-            SELECT bot_messages_count, bot_messages_limit, bot_exit_reason
+            SELECT bot_messages_count, bot_messages_limit, bot_exit_reason, created_at
             FROM matches
             WHERE id = $1
             """,
@@ -73,14 +85,34 @@ class ExitManager:
         count = result['bot_messages_count'] or 0
         limit = result['bot_messages_limit'] or self.max_messages
         
-        logger.info(f"   📊 Messages bot: {count}/{limit}")
+        # Calculer âge du match
+        match_created = result['created_at']
+        if isinstance(match_created, str):
+            match_created = datetime.fromisoformat(match_created.replace('Z', '+00:00'))
         
-        # Exit si atteint 80% du limit (pour sembler naturel)
+        now = datetime.now(timezone.utc)
+        hours_since_match = (now - match_created).total_seconds() / 3600
+        days_since_match = hours_since_match / 24
+        
+        logger.info(f"   📊 Messages bot: {count}/{limit}")
+        logger.info(f"   📅 Âge match: {days_since_match:.1f} jours ({hours_since_match:.1f}h)")
+        
+        # RÈGLE 1: Pas d'exit pendant les 2 premiers jours
+        if days_since_match < 2:
+            logger.info(f"   ⏰ Jours 1-2: Pas d'exit (développement relation)")
+            return False, None
+        
+        # RÈGLE 2: Jour 3+ = Exit direct
+        if days_since_match >= 3:
+            logger.info(f"   🚪 Jour 3+: Exit direct (relation terminée)")
+            return True, 'relationship_ended'
+        
+        # RÈGLE 3: Jour 2-3 = Comportement normal (exit si limite atteinte)
         if count >= limit * 0.8:
             logger.info(f"   🚪 Exit: Limite atteinte ({count} >= {limit * 0.8})")
             return True, 'limit_reached'
         
-        # Random exit 5% chance après min_messages
+        # Random exit 5% chance après min_messages (mais pas avant jour 2)
         if count >= self.min_messages:
             if random.random() < self.exit_chance:
                 logger.info(f"   🎲 Exit: Random trigger (5% chance)")
@@ -97,7 +129,36 @@ class ExitManager:
         """
         messages = []
         
-        # Choisir le type de raison
+        # Cas spécial: Jour 3+ (relationship_ended)
+        if reason == 'relationship_ended':
+            intro = random.choice(self.EXIT_TEMPLATES['relationship_ended'])
+            messages.append({
+                'text': intro,
+                'delay': random.uniform(2, 4)
+            })
+            
+            # Message principal: J'ai rencontré quelqu'un
+            main_msg = random.choice(self.EXIT_TEMPLATES['new_match'])
+            messages.append({
+                'text': main_msg,
+                'delay': random.uniform(3, 5)
+            })
+            
+            # Goodbye
+            goodbye = random.choice(self.EXIT_TEMPLATES['goodbye'])
+            messages.append({
+                'text': goodbye,
+                'delay': random.uniform(2, 3)
+            })
+            
+            logger.info(f"   📝 Séquence exit Jour 3+ (3 messages)")
+            logger.info(f"      1. {intro[:50]}...")
+            logger.info(f"      2. {main_msg[:50]}...")
+            logger.info(f"      3. {goodbye[:50]}...")
+            
+            return messages
+        
+        # Cas normaux (limit_reached, random_exit)
         if reason == 'limit_reached':
             reason_type = random.choice(['new_match', 'busy'])
         elif reason == 'random_exit':
