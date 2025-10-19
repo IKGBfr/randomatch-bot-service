@@ -51,8 +51,8 @@ class Config:
     
     # Initiation settings
     INITIATION_PROBABILITY = 1.0 if TEST_MODE else 0.5
-    MIN_DELAY_MINUTES = 0 if TEST_MODE else 15
-    MAX_DELAY_MINUTES = 1 if TEST_MODE else 360
+    MIN_DELAY_MINUTES = 0 if TEST_MODE else 2
+    MAX_DELAY_MINUTES = 1 if TEST_MODE else 5
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

@@ -135,14 +135,16 @@ class MatchMonitor:
     
     def _calculate_delay(self) -> int:
         """
-        Calcule délai en minutes (15min-6h).
-        Distribution non uniforme : plus probable autour 1-2h.
+        Calcule délai en minutes.
+        Distribution triangulaire : pic au milieu de la plage.
         """
-        # Distribution triangulaire : pic à 90min
+        # Pic au milieu de MIN et MAX
+        mode = (self.MIN_DELAY_MINUTES + self.MAX_DELAY_MINUTES) / 2
+        
         delay = int(random.triangular(
             self.MIN_DELAY_MINUTES,
             self.MAX_DELAY_MINUTES,
-            90  # Mode (pic de probabilité)
+            mode
         ))
         
         return delay
