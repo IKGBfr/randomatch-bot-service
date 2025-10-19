@@ -109,7 +109,8 @@ ANALYSE DU MESSAGE:
         
         if analysis['requires_multi_messages']:
             instructions += "- Découpe ta réponse en 2-3 messages courts et naturels\n"
-            instructions += "- Format: message1|||message2|||message3 (séparés par |||)\n"
+            instructions += "- Sépare chaque message par ||| OU [MSG_BREAK] OU double saut de ligne\n"
+            instructions += "- Exemple: 'Salut !|||Comment ça va ?|||Moi ça va bien'\n"
         else:
             instructions += "- Un seul message naturel suffit\n"
         
@@ -300,20 +301,36 @@ TA RÉPONSE:"""
             logger.info(f"✅ Réponse: {response[:100]}...")
             
             # Parser multi-messages si nécessaire
+            # Accepter plusieurs formats de séparateurs
             if '|||' in response:
                 messages_to_send = [m.strip() for m in response.split('|||')]
+                logger.info(f"   🔀 Split par ||| : {len(messages_to_send)} messages")
+            elif '[MSG_BREAK]' in response:
+                messages_to_send = [m.strip() for m in response.split('[MSG_BREAK]')]
+                logger.info(f"   🔀 Split par [MSG_BREAK] : {len(messages_to_send)} messages")
+            elif '\n\n' in response and len(response.split('\n\n')) <= 4:
+                # Double newline peut aussi séparer des messages courts
+                messages_to_send = [m.strip() for m in response.split('\n\n') if m.strip()]
+                logger.info(f"   🔀 Split par \\n\\n : {len(messages_to_send)} messages")
             else:
                 messages_to_send = [response]
+                logger.info("   ➡️ Un seul message")
             
             # =============================
             # PHASE 6: ENVOI AVEC TIMING
             # =============================
             logger.info(f"\n📤 Phase 6: Envoi {len(messages_to_send)} message(s)...")
             
+            # Log aperçu des messages
+            for i, msg in enumerate(messages_to_send, 1):
+                logger.info(f"   Message {i}: {msg[:50]}..."  if len(msg) > 50 else f"   Message {i}: {msg}")
+            
+            logger.info("")  # Ligne vide
+            
             for i, msg in enumerate(messages_to_send):
                 # Calculer temps frappe
                 typing_time = timing_engine.calculate_typing_time(msg)
-                logger.info(f"   Message {i+1}: {typing_time}s de frappe")
+                logger.info(f"   ⏱️ Frappe msg {i+1}: {typing_time}s")
                 
                 await asyncio.sleep(typing_time)
                 
@@ -326,7 +343,7 @@ TA RÉPONSE:"""
                 # Pause entre messages si plusieurs
                 if i < len(messages_to_send) - 1:
                     pause = timing_engine.calculate_pause_between_messages(len(msg))
-                    logger.info(f"   Pause: {pause}s")
+                    logger.info(f"   ⏸️ Pause: {pause}s")
                     await asyncio.sleep(pause)
                     
                     # Réactiver typing pour prochain
