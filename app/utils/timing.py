@@ -7,6 +7,7 @@ un comportement humain naturel.
 
 import random
 from typing import Dict
+from datetime import datetime, time
 
 
 class TimingEngine:
@@ -22,7 +23,8 @@ class TimingEngine:
         self,
         analysis: Dict,
         message_length: int,
-        time_since_last_bot: float = 0
+        time_since_last_bot: float = 0,
+        current_time: datetime = None
     ) -> float:
         """
         Calcule le délai de réflexion avant de répondre
@@ -31,6 +33,7 @@ class TimingEngine:
             analysis: Dict avec urgency, complexity, etc.
             message_length: Longueur du message user
             time_since_last_bot: Temps depuis dernier message bot (secondes)
+            current_time: Heure actuelle (pour timing horaire)
             
         Returns:
             Délai en secondes (float)
@@ -47,6 +50,10 @@ class TimingEngine:
             1: 12   # Très posé : 12s
         }
         base_delay = urgency_delays.get(urgency, 5)
+        
+        # 🆕 PHASE 4: Ajustement selon heure de la journée
+        if current_time:
+            base_delay = self._adjust_delay_for_time_of_day(base_delay, current_time)
         
         # Ajustement selon complexité
         if complexity >= 4:
@@ -142,6 +149,69 @@ class TimingEngine:
         has_question_and_statement = '?' in text and '.' in text
         
         return has_multiple_thoughts and (is_long or has_question_and_statement)
+    
+    def _adjust_delay_for_time_of_day(self, base_delay: float, current_time: datetime) -> float:
+        """
+        Ajuste le délai selon l'heure (Phase 4: Disponibilité Variable)
+        
+        Plages horaires :
+        - 7h-9h : Réveil, peu actif → +50%
+        - 9h-17h : Travail, indispo → +200%
+        - 17h-20h : Retour travail → +30%
+        - 20h-23h : Très actif → base
+        - 23h-7h : Sommeil → +500%
+        """
+        hour = current_time.hour
+        is_weekend = current_time.weekday() >= 5  # 5=samedi, 6=dimanche
+        
+        # Weekend : plus flexible
+        if is_weekend:
+            if 9 <= hour < 12:  # Matin relax
+                return base_delay * 1.2
+            elif 12 <= hour < 20:  # Journée active
+                return base_delay * 0.9
+            elif 20 <= hour < 23:  # Soirée
+                return base_delay
+            else:  # Nuit
+                return base_delay * 3
+        
+        # Semaine : horaires travail
+        if 7 <= hour < 9:  # Réveil
+            return base_delay * 1.5
+        elif 9 <= hour < 12 or 14 <= hour < 17:  # Travail
+            return base_delay * 3  # Très indispo
+        elif 12 <= hour < 14:  # Pause déj
+            return base_delay * 1.3
+        elif 17 <= hour < 20:  # Retour travail
+            return base_delay * 1.3
+        elif 20 <= hour < 23:  # Soirée = peak
+            return base_delay  # Normal
+        else:  # 23h-7h = Nuit
+            return base_delay * 5  # Dort
+    
+    def is_active_hours(self, current_time: datetime = None) -> bool:
+        """
+        Vérifie si c'est une heure active pour le bot
+        
+        Returns:
+            True si heure active, False si indispo
+        """
+        if not current_time:
+            current_time = datetime.now()
+        
+        hour = current_time.hour
+        is_weekend = current_time.weekday() >= 5
+        
+        # Nuit : toujours inactif
+        if hour < 7 or hour >= 23:
+            return False
+        
+        # Weekend : actif 9h-23h
+        if is_weekend:
+            return 9 <= hour < 23
+        
+        # Semaine : évite 9h-17h (travail)
+        return not (9 <= hour < 17)
     
     def estimate_total_response_time(
         self,

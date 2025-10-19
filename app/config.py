@@ -1,64 +1,67 @@
-"""Configuration module pour RandoMatch Bot Service."""
-
+"""Configuration centrale pour le bot service."""
 import os
-from pathlib import Path
-from typing import Optional
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
-# Charger le .env explicitement AVANT tout
-env_path = Path(__file__).parent.parent / ".env"
-if env_path.exists():
-    load_dotenv(dotenv_path=env_path, override=True)
+load_dotenv()
 
-
-class Settings(BaseSettings):
-    """Configuration globale du service bot."""
+class Config:
+    """Configuration du bot service"""
     
     # Supabase
-    supabase_url: str
-    supabase_service_key: str
-    postgres_connection_string: str
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+    POSTGRES_CONNECTION_STRING = os.getenv("POSTGRES_CONNECTION_STRING")
     
     # Redis (Upstash)
-    redis_url: str
+    REDIS_URL = os.getenv("REDIS_URL")
     
-    # OpenRouter
-    openrouter_api_key: str
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "x-ai/grok-4-fast"
-    
-    # Bot Configuration (global)
-    typing_speed_cps: float = 3.5  # Caractères par seconde
-    min_thinking_delay: int = 3  # Secondes
-    max_thinking_delay: int = 15  # Secondes
-    
-    # Environment
-    environment: str = "production"
-    log_level: str = "INFO"
-    
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore"
+    # OpenRouter / Grok
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4-fast")
+    OPENROUTER_FALLBACK_MODEL = os.getenv(
+        "OPENROUTER_FALLBACK_MODEL",
+        "deepseek/deepseek-chat-v3-0324"
+    )
+    OPENROUTER_BASE_URL = os.getenv(
+        "OPENROUTER_BASE_URL",
+        "https://openrouter.ai/api/v1"
+    )
+    OPENROUTER_SITE_URL = os.getenv(
+        "OPENROUTER_SITE_URL",
+        "https://randomatch.fr"
+    )
+    OPENROUTER_APP_NAME = os.getenv(
+        "OPENROUTER_APP_NAME",
+        "RandoMatch"
     )
     
-    @property
-    def is_production(self) -> bool:
-        """Vérifie si on est en production."""
-        return self.environment.lower() == "production"
+    # Paramètres génération
+    DEFAULT_TEMPERATURE = 0.8
+    MAX_TOKENS = 200
     
-    @property
-    def is_development(self) -> bool:
-        """Vérifie si on est en développement."""
-        return self.environment.lower() in ("development", "dev")
-
-
-# Instance globale créée APRÈS le load_dotenv
-settings = Settings()
-
-
-def get_settings() -> Settings:
-    """Retourne l'instance des settings."""
-    return settings
+    # Bot IDs (à récupérer depuis Supabase)
+    BOT_CAMILLE_ID = os.getenv("BOT_CAMILLE_ID")
+    BOT_PAUL_ID = os.getenv("BOT_PAUL_ID")
+    
+    # Test user ID
+    TEST_USER_ID = os.getenv("TEST_USER_ID", "eb2d9d5c-4f9a-4785-a203-1916e72028f2")
+    
+    # Mode test
+    TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
+    
+    # Initiation settings
+    INITIATION_PROBABILITY = float(os.getenv("INITIATION_PROBABILITY", "0.5"))
+    MIN_DELAY_MINUTES = int(os.getenv("MIN_DELAY_MINUTES", "15"))
+    MAX_DELAY_MINUTES = int(os.getenv("MAX_DELAY_MINUTES", "360"))
+    
+    # En mode test : délai immédiat
+    if TEST_MODE:
+        MIN_DELAY_MINUTES = 0
+        MAX_DELAY_MINUTES = 1
+        INITIATION_PROBABILITY = 1.0  # 100% d'initiation en test
+    
+    # Logging
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    
+    # Environment
+    ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
