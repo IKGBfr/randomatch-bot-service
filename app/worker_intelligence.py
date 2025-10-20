@@ -1,11 +1,10 @@
 """
 Worker Intelligence - Traite les messages avec intelligence conversationnelle
 
-- Pre-processing (typing, history, memory)
-- Analyse contextuelle
-- Timing adaptatif
-- Génération réponse
-- Update memory
+✅ VERSION 3.0 - Anti-Double Réponse Robuste
+- Lock Redis distribué (multi-instance safe)
+- Monitoring continu (réflexion + frappe)
+- Annulation si nouveaux messages détectés
 """
 
 import asyncio
@@ -22,8 +21,11 @@ from app.analysis import message_analyzer
 from app.utils.timing import timing_engine
 from app.exit_manager import ExitManager
 from app.prompt_builder import prompt_builder
-from app.message_monitor import MessageMonitor
 from app.response_cache import ResponseCache
+
+# 🆕 NOUVEAUX IMPORTS
+from app.conversation_lock import ConversationLock
+from app.continuous_monitor import ContinuousMonitor
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkerIntelligence:
-    """Worker intelligent avec analyse contextuelle complète + lock anti-duplication"""
+    """Worker intelligent avec lock distribué + monitoring continu"""
     
     def __init__(self):
         self.supabase: SupabaseClient = None
@@ -46,19 +48,26 @@ class WorkerIntelligence:
             exit_chance=0.05
         )
         
-        # 🆕 LOCK SYSTEM - Évite traitement parallèle du même match
-        self.processing_locks: dict[str, asyncio.Lock] = {}  # {match_id: Lock}
+        # 🆕 LOCK REDIS DISTRIBUÉ (remplace asyncio.Lock)
+        self.conversation_lock: ConversationLock = None
         
-        # 🆕 RESPONSE CACHE - Évite génération de doublons
+        # 🆕 MONITORING CONTINU (remplace MessageMonitor)
+        self.continuous_monitor: ContinuousMonitor = None
+        
+        # Response cache (conservé)
         self.response_cache: ResponseCache = None
         
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
         logger.info("🔌 Connexion à Supabase...")
         self.supabase = SupabaseClient()
-        await self.supabase.connect()  # Créer le pool PostgreSQL
+        await self.supabase.connect()
         self.pre_processor = PreProcessor(self.supabase)
-        logger.info("✅ Connecté à Supabase")
+        
+        # 🆕 Initialiser continuous monitor
+        self.continuous_monitor = ContinuousMonitor(self.supabase)
+        
+        logger.info("✅ Connecté à Supabase + Continuous Monitor")
         
     async def connect_redis(self):
         """Connexion Redis"""
@@ -68,9 +77,14 @@ class WorkerIntelligence:
             encoding="utf-8",
             decode_responses=True
         )
-        # Initialiser cache de réponses
+        
+        # 🆕 Initialiser conversation lock (Redis distribué)
+        self.conversation_lock = ConversationLock(self.redis_client)
+        
+        # Response cache
         self.response_cache = ResponseCache(self.redis_client)
-        logger.info("✅ Connecté à Redis + Cache réponses")
+        
+        logger.info("✅ Connecté à Redis + Lock distribué + Cache")
     
     def connect_openai(self):
         """Connexion OpenRouter"""
@@ -216,426 +230,393 @@ TA RÉPONSE:"""
     
     async def process_message(self, event_data: dict):
         """
-        Traite un message avec intelligence complète + lock anti-duplication
+        ✅ VERSION 3.0 - Point d'entrée avec lock Redis distribué
+        
+        Garantit qu'un seul worker traite un match à la fois,
+        même avec plusieurs instances Railway.
         """
-        # Extraction données pour obtenir match_id
+        # Extraction match_id
         if event_data.get('type') == 'grouped':
             match_id = event_data['match_id']
         else:
             match_id = event_data['match_id']
         
-        # 🆕 LOCK SYSTEM - Obtenir ou créer lock pour ce match
-        if match_id not in self.processing_locks:
-            self.processing_locks[match_id] = asyncio.Lock()
+        # ============================================
+        # 🆕 TENTATIVE D'ACQUISITION DU LOCK REDIS
+        # ============================================
         
-        lock = self.processing_locks[match_id]
+        logger.info(f"🔒 Tentative acquisition lock Redis pour {match_id[:8]}...")
         
-        # Check si déjà en traitement
-        if lock.locked():
-            logger.warning(f"⚠️ Match {match_id} déjà en traitement")
-            logger.warning(f"   → Job mis en attente...")
+        lock_acquired = await self.conversation_lock.acquire(match_id, timeout=5)
+        
+        if not lock_acquired:
+            logger.warning(
+                f"⏸️  Match {match_id[:8]} déjà en traitement par un autre worker"
+            )
+            logger.warning("   → Message repoussé dans queue (attente 5s)")
             
-            # Attendre que le traitement actuel finisse
-            async with lock:
-                logger.info("✅ Lock acquis, vérification si besoin de traiter...")
-                
-                # Re-check si nos messages sont déjà dans l'historique
-                # Cela évite de traiter un message déjà traité par le job précédent
-                
-                # Extraction messages pour comparaison
-                if event_data.get('type') == 'grouped':
-                    our_messages = event_data['messages']
-                    our_ids = {msg['id'] for msg in our_messages if 'id' in msg}
-                else:
-                    our_ids = {event_data.get('message_id')} if event_data.get('message_id') else set()
-                
-                if our_ids:
-                    # Charger historique actuel
-                    current_history = await self.pre_processor.fetch_conversation_history(match_id)
-                    history_ids = {msg['id'] for msg in current_history}
-                    
-                    # Check si déjà traité
-                    if our_ids.issubset(history_ids):
-                        logger.info("✅ Messages déjà traités par job précédent, skip")
-                        return  # STOP - Déjà fait
-                
-                logger.info("🔄 Messages pas encore traités, traitement normal")
-                # Continue avec le traitement normal ci-dessous
+            # Attendre et repousser
+            await asyncio.sleep(5)
+            await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+            return  # STOP - un autre worker s'en occupe
         
-        # Si lock pas pris, l'acquérir maintenant
-        async with lock:
-            await self._process_message_impl(event_data)
-    
-    async def _process_message_impl(self, event_data: dict):
-        """
-        Implémentation réelle du traitement (après acquisition du lock)
-        """
+        logger.info(f"✅ Lock Redis acquis pour {match_id[:8]}")
+        
+        # ============================================
+        # TRAITEMENT AVEC LOCK (toujours libéré)
+        # ============================================
+        
         try:
-            # Extraction données
-            if event_data.get('type') == 'grouped':
-                # Messages groupés
-                messages = event_data['messages']
-                match_id = event_data['match_id']
-                bot_id = event_data['bot_id']
-                # Prendre le dernier message comme principal
-                main_msg = messages[-1]
-                user_id = main_msg['sender_id']
-                user_message = ' '.join([m['message_content'] for m in messages])
-                logger.info(f"📦 Traitement {len(messages)} messages groupés")
-            else:
-                # Message simple
-                match_id = event_data['match_id']
-                bot_id = event_data['bot_id']
-                user_id = event_data['sender_id']
-                user_message = event_data['message_content']
-            
-            logger.info("=" * 60)
-            logger.info(f"🤖 TRAITEMENT MESSAGE INTELLIGENT")
-            logger.info(f"   Match: {match_id}")
-            logger.info(f"   Message: {user_message[:100]}")
-            logger.info("=" * 60)
-            
-            # =============================
-            # PHASE 0: CHECK CACHE - Éviter doublons
-            # =============================
-            logger.info("\n💾 Phase 0: Vérification cache...")
-            
-            # Check 1: Génération déjà en cours ?
-            if await self.response_cache.is_generating(match_id):
-                logger.warning("⚠️ Génération déjà en cours pour ce match")
-                logger.warning("   → SKIP ce job pour éviter doublon")
-                return  # STOP COMPLET
-            
-            # Check 2: Réponse similaire récente ?
-            similar_response = await self.response_cache.find_similar_response(
-                match_id,
-                user_message
-            )
-            
-            if similar_response:
-                logger.warning("⚠️ Question similaire déjà traitée récemment")
-                logger.warning(f"   Réponse cache: {similar_response[:50]}")
-                logger.warning("   → SKIP pour éviter doublon exact")
-                return  # STOP COMPLET
-            
-            logger.info("✅ Pas de doublon détecté, traitement normal")
-            
-            # Marquer qu'on commence la génération
-            await self.response_cache.mark_generating(match_id, user_message)
-            
-            # Créer monitor pour détecter nouveaux messages
-            monitor = MessageMonitor(self.supabase)
-            initial_message_count = 0  # Sera mis à jour après pre-processing
-            
-            # =============================
-            # PHASE 1: PRE-PROCESSING
-            # =============================
-            logger.info("\n📦 Phase 1: Pre-processing...")
-            
-            context = await self.pre_processor.prepare_context(
-                match_id, bot_id, user_id
-            )
-            
-            if context['is_typing']:
-                # User tape encore, ABANDON TOTAL
-                logger.info("⚠️ User tape encore → ABANDON COMPLET")
-                logger.info("   Message sera traité quand user aura fini")
-                
-                # Attendre 5s avant de repousser pour éviter spam
-                await asyncio.sleep(5)
-                
-                # Ajouter un compteur de retry pour éviter boucle infinie
-                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
-                
-                if event_data['retry_count'] <= 5:
-                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                    logger.info(f"📨 Message repoussé dans queue (retry {event_data['retry_count']}/5)")
-                else:
-                    logger.warning("❌ Trop de retry, abandon définitif")
-                
-                return  # STOP COMPLET
-            
-            # =============================
-            # PHASE 2: ANALYSE
-            # =============================
-            logger.info("\n🧠 Phase 2: Analyse contextuelle...")
-            
-            analysis = message_analyzer.analyze_message(
-                user_message,
-                context['history'],
-                context['memory']
-            )
-            
-            logger.info(f"   Urgency: {analysis['urgency']}/5")
-            logger.info(f"   Complexity: {analysis['complexity']}/5")
-            logger.info(f"   Tone: {analysis['emotional_tone']}")
-            logger.info(f"   Multi-messages: {analysis['requires_multi_messages']}")
-            
-            # Enregistrer nombre initial de messages pour monitoring
-            initial_message_count = len(context['history'])
-            logger.info(f"   📊 Base monitoring: {initial_message_count} messages")
-            
-            # =============================
-            # PHASE 3: TIMING - RÉFLEXION
-            # =============================
-            logger.info("\n⏱️  Phase 3: Calcul timing...")
-            
-            thinking_delay = timing_engine.calculate_thinking_delay(
-                analysis,
-                len(user_message),
-                context['time_since_last_bot_minutes'] * 60  # Convertir en secondes
-            )
-            
-            logger.info(f"   Délai réflexion: {thinking_delay}s")
-            
-            # Démarrer monitoring en arrière-plan pendant réflexion
-            logger.info(f"👁️  Démarrage monitoring pendant réflexion...")
-            monitoring_task = asyncio.create_task(
-                monitor.start_monitoring(match_id, initial_message_count)
-            )
-            
-            logger.info(f"⏳ Attente {thinking_delay}s (temps de réflexion)...")
-            await asyncio.sleep(thinking_delay)
-            
-            # Arrêter monitoring
-            monitor.stop_monitoring()
-            
-            # CHECKPOINT 1 : Nouveaux messages pendant réflexion ?
-            if monitor.has_new_messages():
-                logger.warning("⚠️ Nouveaux messages détectés pendant réflexion → ABANDON")
-                logger.info("📨 Message repousé pour retraitement complet")
-                
-                await asyncio.sleep(2)  # Court délai
-                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
-                if event_data['retry_count'] <= 5:
-                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                else:
-                    logger.warning("❌ Trop de retry, abandon définitif")
-                return  # STOP
-            
-            # RE-VÉRIFIER : User tape-t-il encore ? Nouveaux messages ?
-            logger.info("\n🔍 Vérification finale avant génération...")
-            is_still_typing = await self.pre_processor.check_user_typing(
-                match_id, user_id, max_retries=1  # Vérif rapide
-            )
-            
-            if is_still_typing:
-                logger.info("⚠️ User ENCORE en train de taper → ABANDON")
-                
-                # Attendre plus longtemps cette fois
-                await asyncio.sleep(10)
-                
-                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
-                if event_data['retry_count'] <= 5:
-                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                    logger.info(f"📨 Re-tentative plus tard (retry {event_data['retry_count']}/5)")
-                else:
-                    logger.warning("❌ Abandon définitif après 5 retry")
-                return  # STOP
-            
-            # Vérifier nouveaux messages depuis le début
-            fresh_history = await self.pre_processor.fetch_conversation_history(match_id)
-            if len(fresh_history) > len(context['history']):
-                logger.info(f"🆕 Nouveaux messages détectés ({len(fresh_history) - len(context['history'])} nouveaux)")
-                logger.info("   → ABANDON, traiter tous les messages ensemble")
-                
-                await asyncio.sleep(3)  # Court délai
-                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
-                if event_data['retry_count'] <= 5:
-                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                return  # STOP
-            
-            logger.info("✅ OK pour générer")
-            
-            # =============================
-            # PHASE 4: ACTIVATION TYPING
-            # =============================
-            logger.info("\n⌨️  Phase 4: Activation typing...")
-            await self.activate_typing(bot_id, match_id)
-            
-            # =============================
-            # PHASE 5: GÉNÉRATION RÉPONSE
-            # =============================
-            logger.info("\n🧠 Phase 5: Génération réponse IA...")
-            
-            # Utiliser le nouveau prompt builder avec anti-répétition
-            prompt = prompt_builder.build_full_prompt(
-                context['bot_profile'],
-                context['memory'],
-                context['history'],
-                user_message,
-                analysis
-            )
-            
-            response = self.generate_response(
-                prompt,
-                context['bot_profile'].get('temperature', 0.8)
-            )
-            
-            logger.info(f"✅ Réponse: {response[:100]}...")
-            
-            # 🆕 CHECK DOUBLON APRES GENERATION
-            is_duplicate = await self.response_cache.is_duplicate_response(
-                match_id,
-                response
-            )
-            
-            if is_duplicate:
-                logger.error("❌ Réponse générée est un DOUBLON!")
-                logger.error("   → NE PAS ENVOYER")
-                
-                # Clear flag génération
-                await self.response_cache.clear_generating(match_id)
-                await self.deactivate_typing(bot_id, match_id)
-                
-                return  # STOP - Ne pas envoyer
-            
-            # CHECKPOINT 2 : Nouveaux messages après génération ?
-            logger.info("🔍 Vérification après génération...")
-            has_new = await monitor.check_once(match_id, initial_message_count)
-            
-            if has_new:
-                logger.warning("⚠️ Nouveaux messages après génération → NE PAS ENVOYER")
-                logger.info("📨 Message repousé pour retraitement avec nouveau contexte")
-                
-                await self.deactivate_typing(bot_id, match_id)  # Désactiver typing
-                
-                await asyncio.sleep(3)  # Délai plus long
-                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
-                if event_data['retry_count'] <= 5:
-                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
-                else:
-                    logger.warning("❌ Trop de retry, abandon définitif")
-                return  # STOP
-            
-            logger.info("✅ Pas de nouveaux messages, on peut envoyer")
-            
-            # ⚠️ DÉSACTIVÉ TEMPORAIREMENT - Évite doublons
-            # Parser multi-messages UNIQUEMENT si séparateur explicite |||
-            # if '|||' in response:
-            #     messages_to_send = [m.strip() for m in response.split('|||')]
-            #     logger.info(f"   🔀 Split par ||| : {len(messages_to_send)} messages")
-            # else:
-            #     # Un seul message par défaut (évite contradictions)
-            #     messages_to_send = [response]
-            #     logger.info("   ➡️ Un seul message")
-            
-            # FORCE UN SEUL MESSAGE jusqu'à fix du split
-            messages_to_send = [response.replace('|||', ' ')]
-            logger.info("   ➡️ Un seul message (split désactivé)")
-            
-            # =============================
-            # PHASE 6: ENVOI AVEC TIMING
-            # =============================
-            logger.info(f"\n📤 Phase 6: Envoi {len(messages_to_send)} message(s)...")
-            
-            # Log aperçu des messages
-            for i, msg in enumerate(messages_to_send, 1):
-                logger.info(f"   Message {i}: {msg[:50]}..."  if len(msg) > 50 else f"   Message {i}: {msg}")
-            
-            logger.info("")  # Ligne vide
-            
-            # 🆕 STOCKER DANS CACHE AVANT ENVOI
-            # (pour que jobs parallèles voient qu'on va envoyer)
-            await self.response_cache.store_response(
-                match_id,
-                response,  # Réponse complète
-                user_message
-            )
-            
-            for i, msg in enumerate(messages_to_send):
-                # VÉRIFIER si user tape avant d'envoyer ce message
-                logger.info(f"   🔍 Vérification typing avant msg {i+1}...")
-                is_typing_now = await self.pre_processor.check_user_typing(
-                    match_id, user_id, max_retries=1
-                )
-                
-                if is_typing_now:
-                    logger.info(f"   ⚠️ User tape avant envoi msg {i+1} → ABANDON messages restants")
-                    await self.deactivate_typing(bot_id, match_id)
-                    break  # Arrêter l'envoi, ne pas envoyer les messages restants
-                
-                # Calculer temps frappe
-                typing_time = timing_engine.calculate_typing_time(msg)
-                logger.info(f"   ⏱️ Frappe msg {i+1}: {typing_time}s")
-                
-                await asyncio.sleep(typing_time)
-                
-                # Envoyer
-                await self.send_message(match_id, bot_id, msg)
-                
-                # Désactiver typing temporairement
-                await self.deactivate_typing(bot_id, match_id)
-                
-                # Pause entre messages si plusieurs
-                if i < len(messages_to_send) - 1:
-                    pause = timing_engine.calculate_pause_between_messages(len(msg))
-                    logger.info(f"   ⏸️ Pause: {pause}s")
-                    await asyncio.sleep(pause)
-                    
-                    # Réactiver typing pour prochain
-                    await self.activate_typing(bot_id, match_id)
-            
-            logger.info("\n✅ Message traité avec succès !")
-            
-            # 🆕 CLEANUP CACHE
-            await self.response_cache.clear_generating(match_id)
-            
-            # =============================
-            # PHASE 7: VÉRIFICATION EXIT
-            # =============================
-            logger.info("\n🚪 Phase 7: Vérification exit...")
-            
-            should_exit, exit_reason = await self.exit_manager.check_should_exit(
-                match_id, 
-                self.supabase
-            )
-            
-            if should_exit:
-                logger.info(f"   ⚠️ Bot doit quitter: {exit_reason}")
-                
-                # Générer séquence de sortie
-                exit_messages = self.exit_manager.generate_exit_sequence(exit_reason)
-                
-                logger.info(f"\n📤 Envoi séquence exit ({len(exit_messages)} messages)...")
-                
-                for i, exit_msg in enumerate(exit_messages, 1):
-                    # Délai avant le message
-                    delay = exit_msg['delay']
-                    logger.info(f"   ⏳ Attente {delay}s avant msg {i}...")
-                    await asyncio.sleep(delay)
-                    
-                    # Activer typing
-                    await self.activate_typing(bot_id, match_id)
-                    
-                    # Simuler frappe
-                    typing_time = timing_engine.calculate_typing_time(exit_msg['text'])
-                    logger.info(f"   ⌨️ Frappe {typing_time}s: {exit_msg['text'][:50]}...")
-                    await asyncio.sleep(typing_time)
-                    
-                    # Envoyer
-                    await self.send_message(match_id, bot_id, exit_msg['text'])
-                    logger.info(f"   ✅ Exit message {i} envoyé")
-                    
-                    # Désactiver typing
-                    await self.deactivate_typing(bot_id, match_id)
-                
-                # Marquer comme exité
-                await self.exit_manager.mark_as_exited(match_id, exit_reason, self.supabase)
-                
-                logger.info("   🎯 Bot a quitté la conversation")
-            else:
-                logger.info("   ✅ Pas d'exit pour ce message")
+            await self._process_message_impl(event_data)
             
         except Exception as e:
             logger.error(f"❌ Erreur traitement: {e}", exc_info=True)
             
             # Cleanup cache en cas d'erreur
             try:
-                if hasattr(self, 'response_cache') and self.response_cache:
+                if self.response_cache:
                     await self.response_cache.clear_generating(match_id)
             except:
                 pass
+                
+        finally:
+            # ============================================
+            # 🔒 TOUJOURS LIBÉRER LE LOCK REDIS
+            # ============================================
+            await self.conversation_lock.release(match_id)
+            logger.info(f"🔓 Lock Redis libéré pour {match_id[:8]}")
+    
+    async def _process_message_impl(self, event_data: dict):
+        """
+        ✅ VERSION 3.0 - Implémentation avec monitoring continu
+        
+        Surveille les nouveaux messages pendant TOUTE la durée:
+        - Réflexion (thinking delay)
+        - Frappe (typing simulation)
+        
+        Annule et repousse si nouveaux messages détectés.
+        """
+        # Extraction données
+        if event_data.get('type') == 'grouped':
+            messages = event_data['messages']
+            match_id = event_data['match_id']
+            bot_id = event_data['bot_id']
+            main_msg = messages[-1]
+            user_id = main_msg['sender_id']
+            user_message = ' '.join([m['message_content'] for m in messages])
+            logger.info(f"📦 Traitement {len(messages)} messages groupés")
+        else:
+            match_id = event_data['match_id']
+            bot_id = event_data['bot_id']
+            user_id = event_data['sender_id']
+            user_message = event_data['message_content']
+        
+        logger.info("=" * 60)
+        logger.info(f"🤖 TRAITEMENT MESSAGE INTELLIGENT")
+        logger.info(f"   Match: {match_id}")
+        logger.info(f"   Message: {user_message[:100]}")
+        logger.info("=" * 60)
+        
+        # =============================
+        # PHASE 0: CHECK CACHE
+        # =============================
+        logger.info("\n💾 Phase 0: Vérification cache...")
+        
+        if await self.response_cache.is_generating(match_id):
+            logger.warning("⚠️ Génération déjà en cours (cache)")
+            logger.warning("   → SKIP")
+            return
+        
+        similar_response = await self.response_cache.find_similar_response(
+            match_id,
+            user_message
+        )
+        
+        if similar_response:
+            logger.warning("⚠️ Question similaire déjà traitée")
+            logger.warning(f"   Cache: {similar_response[:50]}")
+            logger.warning("   → SKIP")
+            return
+        
+        logger.info("✅ Pas de doublon, traitement normal")
+        
+        # Marquer génération en cours
+        await self.response_cache.mark_generating(match_id, user_message)
+        
+        # =============================
+        # PHASE 1: PRE-PROCESSING
+        # =============================
+        logger.info("\n📦 Phase 1: Pre-processing...")
+        
+        context = await self.pre_processor.prepare_context(
+            match_id, bot_id, user_id
+        )
+        
+        if context['is_typing']:
+            logger.info("⚠️ User tape encore → ABANDON")
+            
+            await asyncio.sleep(5)
+            event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+            
+            if event_data['retry_count'] <= 5:
+                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                logger.info(f"📨 Repoussé (retry {event_data['retry_count']}/5)")
+            else:
+                logger.warning("❌ Trop de retry, abandon")
+            
+            return
+        
+        # =============================
+        # PHASE 2: ANALYSE
+        # =============================
+        logger.info("\n🧠 Phase 2: Analyse contextuelle...")
+        
+        analysis = message_analyzer.analyze_message(
+            user_message,
+            context['history'],
+            context['memory']
+        )
+        
+        logger.info(f"   Urgency: {analysis['urgency']}/5")
+        logger.info(f"   Complexity: {analysis['complexity']}/5")
+        logger.info(f"   Tone: {analysis['emotional_tone']}")
+        logger.info(f"   Multi-messages: {analysis['requires_multi_messages']}")
+        
+        # =============================
+        # 🆕 DÉMARRAGE MONITORING CONTINU
+        # =============================
+        
+        base_message_count = len(context['history'])
+        logger.info(f"\n👁️  Démarrage monitoring continu (base: {base_message_count})")
+        
+        await self.continuous_monitor.start(
+            match_id=match_id,
+            base_message_count=base_message_count,
+            check_interval=2.0  # Vérifier toutes les 2 secondes
+        )
+        
+        # =============================
+        # PHASE 3: TIMING - RÉFLEXION
+        # =============================
+        logger.info("\n⏱️  Phase 3: Calcul timing...")
+        
+        thinking_delay = timing_engine.calculate_thinking_delay(
+            analysis,
+            len(user_message),
+            context['time_since_last_bot_minutes'] * 60
+        )
+        
+        logger.info(f"   Délai réflexion: {thinking_delay}s")
+        logger.info(f"⏳ Attente {thinking_delay}s (temps de réflexion)...")
+        
+        # Attendre PENDANT QUE le monitoring tourne en background
+        await asyncio.sleep(thinking_delay)
+        
+        # ============================================
+        # 🆕 CHECKPOINT 1: Nouveaux messages pendant réflexion ?
+        # ============================================
+        
+        if self.continuous_monitor.has_new_messages():
+            logger.warning("⚠️ Nouveaux messages pendant réflexion → ANNULATION")
+            logger.info("📨 Message repoussé pour retraitement complet")
+            
+            # Arrêter monitoring
+            await self.continuous_monitor.stop()
+            
+            # Repousser
+            await asyncio.sleep(3)
+            event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+            if event_data['retry_count'] <= 5:
+                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+            else:
+                logger.warning("❌ Trop de retry")
+            
+            return  # STOP
+        
+        logger.info("✅ Pas de nouveaux messages pendant réflexion")
+        
+        # =============================
+        # PHASE 4: ACTIVATION TYPING
+        # =============================
+        logger.info("\n⌨️  Phase 4: Activation typing...")
+        await self.activate_typing(bot_id, match_id)
+        
+        # =============================
+        # PHASE 5: GÉNÉRATION RÉPONSE
+        # =============================
+        logger.info("\n🧠 Phase 5: Génération réponse IA...")
+        
+        prompt = prompt_builder.build_full_prompt(
+            context['bot_profile'],
+            context['memory'],
+            context['history'],
+            user_message,
+            analysis
+        )
+        
+        response = self.generate_response(
+            prompt,
+            context['bot_profile'].get('temperature', 0.8)
+        )
+        
+        logger.info(f"✅ Réponse: {response[:100]}...")
+        
+        # Check doublon après génération
+        is_duplicate = await self.response_cache.is_duplicate_response(
+            match_id,
+            response
+        )
+        
+        if is_duplicate:
+            logger.error("❌ Réponse est un DOUBLON!")
+            await self.response_cache.clear_generating(match_id)
+            await self.continuous_monitor.stop()
+            await self.deactivate_typing(bot_id, match_id)
+            return
+        
+        # ============================================
+        # 🆕 CHECKPOINT 2: Nouveaux messages après génération ?
+        # ============================================
+        
+        if self.continuous_monitor.has_new_messages():
+            logger.warning("⚠️ Nouveaux messages après génération → ANNULATION")
+            logger.info("📨 Message repoussé")
+            
+            await self.continuous_monitor.stop()
+            await self.deactivate_typing(bot_id, match_id)
+            
+            await asyncio.sleep(3)
+            event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+            if event_data['retry_count'] <= 5:
+                await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+            else:
+                logger.warning("❌ Trop de retry")
+            
+            return  # STOP
+        
+        logger.info("✅ Pas de nouveaux messages, on peut envoyer")
+        
+        # Parser messages (force un seul pour éviter contradictions)
+        messages_to_send = [response.replace('|||', ' ')]
+        logger.info("   ➡️ Un seul message (split désactivé)")
+        
+        # =============================
+        # PHASE 6: ENVOI AVEC MONITORING CONTINU
+        # =============================
+        logger.info(f"\n📤 Phase 6: Envoi {len(messages_to_send)} message(s)...")
+        
+        # Stocker dans cache avant envoi
+        await self.response_cache.store_response(
+            match_id,
+            response,
+            user_message
+        )
+        
+        for i, msg in enumerate(messages_to_send):
+            # ============================================
+            # 🆕 VÉRIFIER AVANT CHAQUE MESSAGE
+            # ============================================
+            
+            if self.continuous_monitor.has_new_messages():
+                logger.warning(f"⚠️ Nouveaux messages avant msg {i+1} → ANNULATION")
+                await self.continuous_monitor.stop()
+                await self.deactivate_typing(bot_id, match_id)
+                
+                # Repousser
+                await asyncio.sleep(3)
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                
+                return  # STOP
+            
+            # Calculer temps frappe
+            typing_time = timing_engine.calculate_typing_time(msg)
+            logger.info(f"   ⏱️ Frappe msg {i+1}: {typing_time}s")
+            
+            # ============================================
+            # 🆕 ATTENDRE PENDANT QUE MONITORING TOURNE
+            # ============================================
+            await asyncio.sleep(typing_time)
+            
+            # ============================================
+            # 🆕 VÉRIFIER JUSTE AVANT ENVOI
+            # ============================================
+            
+            if self.continuous_monitor.has_new_messages():
+                logger.warning(f"⚠️ Nouveaux messages juste avant envoi → ANNULATION")
+                await self.continuous_monitor.stop()
+                await self.deactivate_typing(bot_id, match_id)
+                
+                await asyncio.sleep(3)
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                
+                return  # STOP
+            
+            # Envoyer
+            await self.send_message(match_id, bot_id, msg)
+            
+            # Désactiver typing
+            await self.deactivate_typing(bot_id, match_id)
+            
+            # Pause entre messages si plusieurs
+            if i < len(messages_to_send) - 1:
+                pause = timing_engine.calculate_pause_between_messages(len(msg))
+                logger.info(f"   ⏸️ Pause: {pause}s")
+                await asyncio.sleep(pause)
+                await self.activate_typing(bot_id, match_id)
+        
+        # ============================================
+        # 🆕 ARRÊTER MONITORING
+        # ============================================
+        
+        await self.continuous_monitor.stop()
+        
+        logger.info("\n✅ Message traité avec succès !")
+        
+        # Cleanup cache
+        await self.response_cache.clear_generating(match_id)
+        
+        # =============================
+        # PHASE 7: VÉRIFICATION EXIT
+        # =============================
+        logger.info("\n🚪 Phase 7: Vérification exit...")
+        
+        should_exit, exit_reason = await self.exit_manager.check_should_exit(
+            match_id, 
+            self.supabase
+        )
+        
+        if should_exit:
+            logger.info(f"   ⚠️ Bot doit quitter: {exit_reason}")
+            
+            exit_messages = self.exit_manager.generate_exit_sequence(exit_reason)
+            
+            logger.info(f"\n📤 Envoi séquence exit ({len(exit_messages)} messages)...")
+            
+            for i, exit_msg in enumerate(exit_messages, 1):
+                delay = exit_msg['delay']
+                logger.info(f"   ⏳ Attente {delay}s avant msg {i}...")
+                await asyncio.sleep(delay)
+                
+                await self.activate_typing(bot_id, match_id)
+                
+                typing_time = timing_engine.calculate_typing_time(exit_msg['text'])
+                logger.info(f"   ⌨️ Frappe {typing_time}s: {exit_msg['text'][:50]}...")
+                await asyncio.sleep(typing_time)
+                
+                await self.send_message(match_id, bot_id, exit_msg['text'])
+                logger.info(f"   ✅ Exit message {i} envoyé")
+                
+                await self.deactivate_typing(bot_id, match_id)
+            
+            await self.exit_manager.mark_as_exited(match_id, exit_reason, self.supabase)
+            
+            logger.info("   🎯 Bot a quitté la conversation")
+        else:
+            logger.info("   ✅ Pas d'exit pour ce message")
     
     async def run(self):
         """Lance le worker"""
@@ -646,7 +627,9 @@ TA RÉPONSE:"""
             self.connect_openai()
             
             logger.info("=" * 60)
-            logger.info("🧠 WORKER INTELLIGENCE ACTIF")
+            logger.info("🧠 WORKER INTELLIGENCE V3.0 ACTIF")
+            logger.info("   ✅ Lock Redis distribué")
+            logger.info("   ✅ Monitoring continu")
             logger.info("=" * 60)
             logger.info("👂 Écoute queue 'bot_messages'...")
             logger.info("⏳ En attente...")
