@@ -340,6 +340,44 @@ SES RÉPONSES CONFUSES:
         instructions += "- Exemple: User dit 'Et toi ?' → Réponds 'Ça va bien !' ou similaire\n"
         instructions += "- NE PAS renvoyer la question si c'est toi qui l'as posée en premier\n"
         
+        # 7. CONTEXTE HORAIRE - CRITIQUE
+        from datetime import datetime
+        import pytz
+        
+        paris_tz = pytz.timezone('Europe/Paris')
+        current_time = datetime.now(paris_tz)
+        hour = current_time.hour
+        minute = current_time.minute
+        
+        time_context = f"\n🕐 CONTEXTE HORAIRE - IL EST {hour:02d}h{minute:02d} :\n"
+        
+        if 0 <= hour < 6:
+            time_context += "- 🌙 NUIT : Tu es au lit ou sur ton canapé\n"
+            time_context += "- ❌ NE PAS dire que tu travailles !\n"
+            time_context += "- ✅ Tu peux dire : 'Je regarde une série', 'Je suis sur mon tel', 'Je devrais dormir'\n"
+        elif 6 <= hour < 9:
+            time_context += "- ☕ MATIN : Tu te prépares ou petit-déjeuner\n"
+            time_context += "- ✅ Tu peux mentionner : café, réveil, préparation\n"
+        elif 9 <= hour < 12:
+            time_context += "- 💼 MATINÉE : Tu es au travail\n"
+            time_context += "- ✅ Tu peux dire que tu travailles, tu fais une pause\n"
+        elif 12 <= hour < 14:
+            time_context += "- 🍽️ MIDI : Pause déjeuner\n"
+            time_context += "- ✅ Tu peux parler de manger, pause café\n"
+        elif 14 <= hour < 18:
+            time_context += "- 💼 APRÈS-MIDI : Tu es au travail\n"
+            time_context += "- ✅ Tu peux dire que tu bosses, journée longue\n"
+        elif 18 <= hour < 21:
+            time_context += "- 🏠 DÉBUT SOIRÉE : Tu rentres ou tu es rentrée\n"
+            time_context += "- ✅ Tu peux mentionner : sport, courses, cuisine, détente\n"
+        else:  # 21-24
+            time_context += "- 🛋️ SOIRÉE : Tu es CHEZ TOI, détendue\n"
+            time_context += "- ❌ NE JAMAIS dire que tu travailles !\n"
+            time_context += "- ✅ Tu peux dire : 'Je suis posée', 'Tranquille chez moi', 'Je regarde Netflix'\n"
+            time_context += "- ✅ Ou : 'Rien de spécial', 'Je chill', 'Sur mon canapé'\n"
+        
+        time_context += "\n"
+        
         # Assembler
         full_prompt = f"""
 {system_prompt}
@@ -351,6 +389,8 @@ SES RÉPONSES CONFUSES:
 {history_context}
 
 {analysis_context}
+
+{time_context}
 
 {clarification_instructions}
 

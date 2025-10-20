@@ -15,3 +15,7 @@ openai==1.58.1
 
 # Async utilities
 aiohttp==3.11.11
+httpx==0.28.1
+
+# Timezone handling
+pytz==2025.1
