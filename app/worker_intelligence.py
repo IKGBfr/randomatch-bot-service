@@ -348,6 +348,7 @@ TA RÉPONSE:"""
         # Analyser si réponse urgente nécessaire
         urgency_check = await self.unanswered_detector.needs_urgent_response(
             prelim_history
+            # 🔧 bot_id n'est plus nécessaire (détection via is_bot)
         )
         
         force_response = False

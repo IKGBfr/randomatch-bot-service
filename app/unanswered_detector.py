@@ -18,8 +18,8 @@ class UnansweredDetector:
     
     async def needs_urgent_response(
         self,
-        messages: List[Dict],
-        bot_id: str
+        messages: List[Dict]
+        # 🔧 SUPPRIMÉ: bot_id (on utilise is_bot à la place)
     ) -> Dict:
         """
         Analyse si bot DOIT répondre maintenant
@@ -45,7 +45,8 @@ class UnansweredDetector:
         user_msgs_since_bot = []
         
         for msg in reversed(messages):
-            is_bot = msg.get('sender_id') == bot_id
+            # 🔧 Utiliser is_bot au lieu de comparer sender_id
+            is_bot = msg.get('profiles', {}).get('is_bot', False)
             
             if is_bot:
                 last_bot_time = msg.get('created_at')
