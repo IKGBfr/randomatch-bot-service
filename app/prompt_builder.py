@@ -223,6 +223,28 @@ ANALYSE DU MESSAGE ACTUEL:
         instructions += "- NE JAMAIS répéter ce que tu viens de dire\n"
         instructions += "- NE JAMAIS poser 2x la même question\n\n"
         
+        # CRITIQUE: Adaptation selon phase conversation
+        message_count = len(history)
+        instructions += "\n🚨 RÈGLE ULTRA-CRITIQUE - ADAPTATION STYLE:\n"
+        
+        if message_count == 0:
+            instructions += "- PREMIER MESSAGE: Tu peux commencer par 'Salut [Prénom] !'\n"
+            instructions += "- C'est normal de se présenter au début\n"
+        elif message_count < 5:
+            instructions += "- DÉBUT DE CONVERSATION (2-5 messages):\n"
+            instructions += "- NE PAS recommencer par 'Salut [Prénom]'\n"
+            instructions += "- Tu as déjà dit bonjour, continue naturellement\n"
+            instructions += "- Commence directement par ta réponse\n"
+        else:
+            instructions += "- CONVERSATION EN COURS (5+ messages):\n"
+            instructions += "- NE JAMAIS JAMAIS commencer par 'Salut [Prénom]'\n"
+            instructions += "- Vous vous parlez déjà depuis un moment\n"
+            instructions += "- Commence DIRECTEMENT par ta réponse\n"
+            instructions += "- Exemple BON: 'Ah cool !', 'Vraiment ?', 'J'adore'\n"
+            instructions += "- Exemple MAUVAIS: 'Salut Albert', 'Hello', 'Hey'\n"
+        
+        instructions += "\n"
+        
         if analysis['urgency'] >= 4:
             instructions += "- Réponds rapidement, c'est urgent\n"
         
