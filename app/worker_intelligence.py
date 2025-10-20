@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkerIntelligence:
-    """Worker intelligent avec analyse contextuelle complète"""
+    """Worker intelligent avec analyse contextuelle complète + lock anti-duplication"""
     
     def __init__(self):
         self.supabase: SupabaseClient = None
@@ -44,6 +44,9 @@ class WorkerIntelligence:
             max_messages=30,
             exit_chance=0.05
         )
+        
+        # 🆕 LOCK SYSTEM - Évite traitement parallèle du même match
+        self.processing_locks: dict[str, asyncio.Lock] = {}  # {match_id: Lock}
         
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
@@ -207,7 +210,59 @@ TA RÉPONSE:"""
     
     async def process_message(self, event_data: dict):
         """
-        Traite un message avec intelligence complète
+        Traite un message avec intelligence complète + lock anti-duplication
+        """
+        # Extraction données pour obtenir match_id
+        if event_data.get('type') == 'grouped':
+            match_id = event_data['match_id']
+        else:
+            match_id = event_data['match_id']
+        
+        # 🆕 LOCK SYSTEM - Obtenir ou créer lock pour ce match
+        if match_id not in self.processing_locks:
+            self.processing_locks[match_id] = asyncio.Lock()
+        
+        lock = self.processing_locks[match_id]
+        
+        # Check si déjà en traitement
+        if lock.locked():
+            logger.warning(f"⚠️ Match {match_id} déjà en traitement")
+            logger.warning(f"   → Job mis en attente...")
+            
+            # Attendre que le traitement actuel finisse
+            async with lock:
+                logger.info("✅ Lock acquis, vérification si besoin de traiter...")
+                
+                # Re-check si nos messages sont déjà dans l'historique
+                # Cela évite de traiter un message déjà traité par le job précédent
+                
+                # Extraction messages pour comparaison
+                if event_data.get('type') == 'grouped':
+                    our_messages = event_data['messages']
+                    our_ids = {msg['id'] for msg in our_messages if 'id' in msg}
+                else:
+                    our_ids = {event_data.get('message_id')} if event_data.get('message_id') else set()
+                
+                if our_ids:
+                    # Charger historique actuel
+                    current_history = await self.pre_processor.fetch_conversation_history(match_id)
+                    history_ids = {msg['id'] for msg in current_history}
+                    
+                    # Check si déjà traité
+                    if our_ids.issubset(history_ids):
+                        logger.info("✅ Messages déjà traités par job précédent, skip")
+                        return  # STOP - Déjà fait
+                
+                logger.info("🔄 Messages pas encore traités, traitement normal")
+                # Continue avec le traitement normal ci-dessous
+        
+        # Si lock pas pris, l'acquérir maintenant
+        async with lock:
+            await self._process_message_impl(event_data)
+    
+    async def _process_message_impl(self, event_data: dict):
+        """
+        Implémentation réelle du traitement (après acquisition du lock)
         """
         try:
             # Extraction données

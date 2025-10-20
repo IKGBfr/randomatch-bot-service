@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class BridgeIntelligence:
-    """Bridge avec grouping intelligent"""
+    """Bridge avec grouping intelligent + cooldown anti-duplication"""
     
     def __init__(self):
         self.pg_conn = None
@@ -28,6 +28,10 @@ class BridgeIntelligence:
         self.supabase_client = None
         self.running = False
         self.GROUPING_DELAY = 15  # Secondes (laisser temps à user de finir)
+        
+        # 🆕 COOLDOWN SYSTEM - Anti-duplication
+        self.last_push_times: Dict[str, datetime] = {}  # {match_id: datetime}
+        self.PUSH_COOLDOWN = 5  # Secondes - évite création jobs multiples
         
     async def connect_postgres(self):
         """Connexion PostgreSQL"""
@@ -82,18 +86,35 @@ class BridgeIntelligence:
             logger.info(f"📦 Grouping: {context['rapid_count']} messages")
             await self.push_to_queue(grouped)
             
+            # 🆕 ENREGISTRER TEMPS DU PUSH - Active cooldown
+            self.last_push_times[match_id] = datetime.now()
+            logger.info(f"⏰ Cooldown activé pour {self.PUSH_COOLDOWN}s")
+            
             # Nettoyer contexte
             await self.context_manager.delete_context(match_id)
     
     async def handle_notification(self, connection, pid, channel, payload):
         """
-        Callback PostgreSQL NOTIFY avec grouping intelligent
+        Callback PostgreSQL NOTIFY avec grouping intelligent + cooldown
         """
         try:
             logger.info(f"📨 Notification reçue")
             
             message = json.loads(payload)
             match_id = message['match_id']
+            
+            # 🆕 CHECK COOLDOWN - Évite jobs multiples pour messages rapprochés
+            last_push = self.last_push_times.get(match_id)
+            if last_push:
+                time_since = (datetime.now() - last_push).total_seconds()
+                if time_since < self.PUSH_COOLDOWN:
+                    logger.info(f"⏸️ Cooldown actif ({time_since:.1f}s), ajout au prochain groupe")
+                    # Ajouter au contexte sans créer de timer
+                    context = await self.context_manager.get_context(match_id)
+                    if context:
+                        await self.context_manager.update_context(match_id, message)
+                        logger.info(f"   📝 Message ajouté au contexte existant")
+                    return  # Ne pas créer de nouveau timer
             
             # Récupérer contexte existant
             context = await self.context_manager.get_context(match_id)
