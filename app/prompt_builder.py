@@ -164,7 +164,8 @@ class PromptBuilder:
         memory: Dict,
         history: List[Dict],
         current_message: str,
-        analysis: Dict
+        analysis: Dict,
+        clarification_context: Dict = None  # 🆕 NOUVEAU
     ) -> str:
         """
         Construit le prompt complet avec TOUT l'historique et anti-répétition
@@ -175,6 +176,7 @@ class PromptBuilder:
             history: Historique COMPLET (200 messages)
             current_message: Message actuel
             analysis: Analyse du message
+            clarification_context: Contexte de clarification (si USER_CONFUSED)
             
         Returns:
             Prompt complet
@@ -229,7 +231,37 @@ ANALYSE DU MESSAGE ACTUEL:
 - Multi-messages: {analysis.get('requires_multi_messages', False)}
 """
         
-        # 5. Instructions adaptatives
+        # 5. 🆕 Contexte de clarification (si USER_CONFUSED)
+        clarification_instructions = ""
+        
+        if clarification_context:
+            clarification_instructions = f"""
+
+🚨 SITUATION SPÉCIALE - USER CONFUS:
+
+L'utilisateur a envoyé plusieurs messages car il n'a PAS COMPRIS ta question précédente.
+
+TA QUESTION PRÉCÉDENTE:
+"{clarification_context.get('last_bot_message', 'N/A')}"
+
+SES RÉPONSES CONFUSES:
+"""
+            for msg in clarification_context.get('confused_messages', []):
+                clarification_instructions += f"- \"{msg}\"\n"
+            
+            clarification_instructions += """
+
+🎯 TON OBJECTIF:
+1. CLARIFIER ta question précédente avec empathie
+2. REFORMULER de manière plus claire
+3. NE PAS t'excuser excessivement (reste naturel)
+4. Exemple: "Ah pardon, je me suis mal exprimé ! Je voulais dire..."
+5. Exemple: "Haha désolé, je voulais savoir..."
+
+⚠️ TON: Léger, pas trop formel, un peu d'auto-dérision OK
+"""
+        
+        # 6. Instructions adaptatives
         instructions = "\nINSTRUCTIONS:\n"
         
         # 🆕 CONTEXTE CRITIQUE : Comprendre la situation actuelle
@@ -319,6 +351,8 @@ ANALYSE DU MESSAGE ACTUEL:
 {history_context}
 
 {analysis_context}
+
+{clarification_instructions}
 
 {instructions}
 

@@ -26,6 +26,7 @@ from app.response_cache import ResponseCache
 # 🆕 NOUVEAUX IMPORTS
 from app.conversation_lock import ConversationLock
 from app.continuous_monitor import ContinuousMonitor
+from app.unanswered_detector import UnansweredDetector  # 🆕 NOUVEAU
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -57,6 +58,9 @@ class WorkerIntelligence:
         # Response cache (conservé)
         self.response_cache: ResponseCache = None
         
+        # 🆕 DÉTECTEUR MESSAGES SANS RÉPONSE
+        self.unanswered_detector: UnansweredDetector = None
+        
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
         logger.info("🔌 Connexion à Supabase...")
@@ -67,7 +71,10 @@ class WorkerIntelligence:
         # 🆕 Initialiser continuous monitor
         self.continuous_monitor = ContinuousMonitor(self.supabase)
         
-        logger.info("✅ Connecté à Supabase + Continuous Monitor")
+        # 🆕 Initialiser unanswered detector
+        self.unanswered_detector = UnansweredDetector()
+        
+        logger.info("✅ Connecté à Supabase + Continuous Monitor + Unanswered Detector")
         
     async def connect_redis(self):
         """Connexion Redis"""
@@ -331,27 +338,55 @@ TA RÉPONSE:"""
         logger.info("=" * 60)
         
         # =============================
-        # PHASE 0: CHECK CACHE
+        # PHASE 0: DÉTECTION URGENCE (NOUVEAU)
         # =============================
-        logger.info("\n💾 Phase 0: Vérification cache...")
+        logger.info("\n🚨 Phase 0: Détection messages sans réponse...")
         
-        if await self.response_cache.is_generating(match_id):
-            logger.warning("⚠️ Génération déjà en cours (cache)")
-            logger.warning("   → SKIP")
-            return
+        # Charger historique préliminaire pour analyse urgence
+        prelim_history = await self.pre_processor.fetch_conversation_history(match_id)
         
-        similar_response = await self.response_cache.find_similar_response(
-            match_id,
-            user_message
+        # Analyser si réponse urgente nécessaire
+        urgency_check = await self.unanswered_detector.needs_urgent_response(
+            prelim_history
         )
         
-        if similar_response:
-            logger.warning("⚠️ Question similaire déjà traitée")
-            logger.warning(f"   Cache: {similar_response[:50]}")
-            logger.warning("   → SKIP")
-            return
+        force_response = False
         
-        logger.info("✅ Pas de doublon, traitement normal")
+        if urgency_check['urgent']:
+            logger.warning("⚠️ RÉPONSE URGENTE NÉCESSAIRE!")
+            logger.warning(f"   {urgency_check['consecutive_user_messages']} messages user consécutifs")
+            logger.warning(f"   Context: {urgency_check['context']}")
+            logger.warning(f"   Attente: {urgency_check['minutes_waiting']:.1f} minutes")
+            
+            force_response = True
+            logger.info("🚨 Force response activé → Ignore cache")
+        
+        # =============================
+        # PHASE 0bis: CHECK CACHE (sauf si force_response)
+        # =============================
+        
+        if not force_response:
+            logger.info("\n💾 Phase 0bis: Vérification cache...")
+            
+            if await self.response_cache.is_generating(match_id):
+                logger.warning("⚠️ Génération déjà en cours (cache)")
+                logger.warning("   → SKIP")
+                return
+            
+            similar_response = await self.response_cache.find_similar_response(
+                match_id,
+                user_message
+            )
+            
+            if similar_response:
+                logger.warning("⚠️ Question similaire déjà traitée")
+                logger.warning(f"   Cache: {similar_response[:50]}")
+                logger.warning("   → SKIP")
+                return
+            
+            logger.info("✅ Pas de doublon, traitement normal")
+        else:
+            logger.info("⚠️ Cache ignoré (force_response)")
         
         # Marquer génération en cours
         await self.response_cache.mark_generating(match_id, user_message)
@@ -467,12 +502,22 @@ TA RÉPONSE:"""
         # =============================
         logger.info("\n🧠 Phase 5: Génération réponse IA...")
         
+        # 🆕 Enrichir prompt si USER_CONFUSED
+        clarification_context = None
+        if urgency_check.get('urgent') and urgency_check['context'] == 'USER_CONFUSED':
+            clarification_context = {
+                'last_bot_message': [m for m in context['history'] if m.get('profiles', {}).get('id') == bot_id][-1]['content'] if any(m.get('profiles', {}).get('id') == bot_id for m in context['history']) else None,
+                'confused_messages': [m['content'] for m in context['history'][-3:] if m.get('profiles', {}).get('id') != bot_id]
+            }
+            logger.info(f"💡 Ajout contexte clarification: {clarification_context}")
+        
         prompt = prompt_builder.build_full_prompt(
             context['bot_profile'],
             context['memory'],
             context['history'],
             user_message,
-            analysis
+            analysis,
+            clarification_context=clarification_context
         )
         
         response = self.generate_response(

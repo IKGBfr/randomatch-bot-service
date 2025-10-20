@@ -182,7 +182,7 @@ class ResponseCache:
         await self.redis.delete(key)
         logger.info("🔓 Flag génération cleared")
     
-    async def store_response(self, match_id: str, bot_response: str, user_message: str):
+    async def store_response(self, match_id: str, bot_response: str, user_message: str, sent_successfully: bool = False):
         """Stocke une réponse dans le cache"""
         key = self._make_key(match_id, "recent")
         
@@ -194,11 +194,12 @@ class ResponseCache:
         else:
             responses = []
         
-        # Ajouter nouvelle réponse
+        # Ajouter nouvelle réponse avec flag sent
         responses.append({
             'response': bot_response,
             'user_message': user_message,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'sent_successfully': sent_successfully  # NOUVEAU FLAG
         })
         
         # Garder seulement les 5 dernières
@@ -211,58 +212,63 @@ class ResponseCache:
             json.dumps(responses)
         )
         
-        logger.info(f"💾 Réponse stockée en cache (total: {len(responses)})")
+        status = "✅ envoyée" if sent_successfully else "⏳ en attente"
+        logger.info(f"💾 Réponse stockée en cache ({status}, total: {len(responses)})")
     
-    async def find_similar_response(
-        self, 
-        match_id: str, 
-        user_message: str
-    ) -> Optional[str]:
+    async def mark_as_sent(self, match_id: str, bot_response: str):
         """
-        Cherche une réponse similaire récente
+        Marque une réponse comme effectivement envoyée
         
-        Returns:
-            str si doublon trouvé, None sinon
+        Important : À appeler APRÈS envoi réussi du message
         """
         key = self._make_key(match_id, "recent")
         existing = await self.redis.get(key)
         
         if not existing:
-            return None
+            logger.warning("⚠️ Aucune réponse en cache à marquer comme envoyée")
+            return
         
         responses = json.loads(existing)
         
-        # Check chaque réponse récente
+        # Trouver et marquer la réponse correspondante
         for resp_data in responses:
-            # Comparer user_message pour voir si même contexte
-            user_similarity = self._calculate_text_similarity(
-                user_message,
-                resp_data['user_message']
-            )
-            
-            if user_similarity > 0.7:  # Même question
-                logger.warning(f"⚠️ Question similaire trouvée!")
-                logger.warning(f"   User msg: {user_message[:50]}")
-                logger.warning(f"   Cached: {resp_data['user_message'][:50]}")
-                logger.warning(f"   Similarity: {user_similarity:.2%}")
-                logger.warning(f"   → Réponse déjà envoyée: {resp_data['response'][:50]}")
-                
-                return resp_data['response']
+            # Comparer texte de réponse (normaliser pour match flexible)
+            if self._normalize_text(resp_data['response']) == self._normalize_text(bot_response):
+                resp_data['sent_successfully'] = True
+                logger.info(f"✅ Réponse marquée comme envoyée: {bot_response[:50]}")
+                break
         
-        return None
+        # Sauvegarder
+        await self.redis.setex(
+            key,
+            self.CACHE_TTL,
+            json.dumps(responses)
+        )
+        
+        logger.info("💾 Cache mis à jour avec statut envoi")
     
     async def is_duplicate_response(
         self,
         match_id: str,
-        new_response: str
+        new_response: str,
+        force_response: bool = False
     ) -> bool:
         """
         Check si la réponse générée est trop similaire aux récentes
         Utilise détection multi-niveaux
         
+        Args:
+            match_id: ID du match
+            new_response: Réponse à vérifier
+            force_response: Si True, ignore cache et retourne toujours False
+        
         Returns:
             True si doublon, False sinon
         """
+        if force_response:
+            logger.info("🚨 Force response activé → Ignore vérification cache")
+            return False
+        
         key = self._make_key(match_id, "recent")
         existing = await self.redis.get(key)
         
@@ -271,8 +277,13 @@ class ResponseCache:
         
         responses = json.loads(existing)
         
-        # Comparer avec chaque réponse récente
+        # Comparer SEULEMENT avec réponses effectivement envoyées
         for resp_data in responses:
+            # NOUVELLE VÉRIFICATION : Skip si pas envoyée
+            if not resp_data.get('sent_successfully', False):
+                logger.info(f"⏭️  Skip comparaison : réponse non envoyée en cache")
+                continue
+            
             is_similar, reason = self._are_responses_similar(
                 new_response,
                 resp_data['response']
