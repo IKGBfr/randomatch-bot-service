@@ -23,6 +23,7 @@ from app.utils.timing import timing_engine
 from app.exit_manager import ExitManager
 from app.prompt_builder import prompt_builder
 from app.message_monitor import MessageMonitor
+from app.response_cache import ResponseCache
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -48,6 +49,9 @@ class WorkerIntelligence:
         # 🆕 LOCK SYSTEM - Évite traitement parallèle du même match
         self.processing_locks: dict[str, asyncio.Lock] = {}  # {match_id: Lock}
         
+        # 🆕 RESPONSE CACHE - Évite génération de doublons
+        self.response_cache: ResponseCache = None
+        
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
         logger.info("🔌 Connexion à Supabase...")
@@ -64,7 +68,9 @@ class WorkerIntelligence:
             encoding="utf-8",
             decode_responses=True
         )
-        logger.info("✅ Connecté à Redis")
+        # Initialiser cache de réponses
+        self.response_cache = ResponseCache(self.redis_client)
+        logger.info("✅ Connecté à Redis + Cache réponses")
     
     def connect_openai(self):
         """Connexion OpenRouter"""
@@ -289,6 +295,34 @@ TA RÉPONSE:"""
             logger.info(f"   Message: {user_message[:100]}")
             logger.info("=" * 60)
             
+            # =============================
+            # PHASE 0: CHECK CACHE - Éviter doublons
+            # =============================
+            logger.info("\n💾 Phase 0: Vérification cache...")
+            
+            # Check 1: Génération déjà en cours ?
+            if await self.response_cache.is_generating(match_id):
+                logger.warning("⚠️ Génération déjà en cours pour ce match")
+                logger.warning("   → SKIP ce job pour éviter doublon")
+                return  # STOP COMPLET
+            
+            # Check 2: Réponse similaire récente ?
+            similar_response = await self.response_cache.find_similar_response(
+                match_id,
+                user_message
+            )
+            
+            if similar_response:
+                logger.warning("⚠️ Question similaire déjà traitée récemment")
+                logger.warning(f"   Réponse cache: {similar_response[:50]}")
+                logger.warning("   → SKIP pour éviter doublon exact")
+                return  # STOP COMPLET
+            
+            logger.info("✅ Pas de doublon détecté, traitement normal")
+            
+            # Marquer qu'on commence la génération
+            await self.response_cache.mark_generating(match_id, user_message)
+            
             # Créer monitor pour détecter nouveaux messages
             monitor = MessageMonitor(self.supabase)
             initial_message_count = 0  # Sera mis à jour après pre-processing
@@ -440,6 +474,22 @@ TA RÉPONSE:"""
             
             logger.info(f"✅ Réponse: {response[:100]}...")
             
+            # 🆕 CHECK DOUBLON APRES GENERATION
+            is_duplicate = await self.response_cache.is_duplicate_response(
+                match_id,
+                response
+            )
+            
+            if is_duplicate:
+                logger.error("❌ Réponse générée est un DOUBLON!")
+                logger.error("   → NE PAS ENVOYER")
+                
+                # Clear flag génération
+                await self.response_cache.clear_generating(match_id)
+                await self.deactivate_typing(bot_id, match_id)
+                
+                return  # STOP - Ne pas envoyer
+            
             # CHECKPOINT 2 : Nouveaux messages après génération ?
             logger.info("🔍 Vérification après génération...")
             has_new = await monitor.check_once(match_id, initial_message_count)
@@ -485,6 +535,14 @@ TA RÉPONSE:"""
             
             logger.info("")  # Ligne vide
             
+            # 🆕 STOCKER DANS CACHE AVANT ENVOI
+            # (pour que jobs parallèles voient qu'on va envoyer)
+            await self.response_cache.store_response(
+                match_id,
+                response,  # Réponse complète
+                user_message
+            )
+            
             for i, msg in enumerate(messages_to_send):
                 # VÉRIFIER si user tape avant d'envoyer ce message
                 logger.info(f"   🔍 Vérification typing avant msg {i+1}...")
@@ -519,6 +577,9 @@ TA RÉPONSE:"""
                     await self.activate_typing(bot_id, match_id)
             
             logger.info("\n✅ Message traité avec succès !")
+            
+            # 🆕 CLEANUP CACHE
+            await self.response_cache.clear_generating(match_id)
             
             # =============================
             # PHASE 7: VÉRIFICATION EXIT
@@ -568,6 +629,13 @@ TA RÉPONSE:"""
             
         except Exception as e:
             logger.error(f"❌ Erreur traitement: {e}", exc_info=True)
+            
+            # Cleanup cache en cas d'erreur
+            try:
+                if hasattr(self, 'response_cache') and self.response_cache:
+                    await self.response_cache.clear_generating(match_id)
+            except:
+                pass
     
     async def run(self):
         """Lance le worker"""
