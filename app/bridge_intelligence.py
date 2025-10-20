@@ -157,11 +157,53 @@ class BridgeIntelligence:
         
         self.running = True
         
+        # Compteur pour keepalive
+        keepalive_counter = 0
+        
         try:
             while self.running:
                 await asyncio.sleep(1)
+                
+                # Keepalive toutes les 30 secondes
+                keepalive_counter += 1
+                if keepalive_counter >= 30:
+                    try:
+                        # Simple query pour garder connexion active
+                        await self.pg_conn.fetchval('SELECT 1')
+                        logger.debug("💓 Keepalive PostgreSQL")
+                        keepalive_counter = 0
+                    except Exception as e:
+                        logger.error(f"❌ Keepalive échoué, reconnexion...")
+                        # Reconnexion
+                        await self.reconnect()
+                        keepalive_counter = 0
+                        
         except KeyboardInterrupt:
             await self.stop()
+    
+    async def reconnect(self):
+        """Reconnecte au PostgreSQL si connexion perdue"""
+        try:
+            logger.warning("🔄 Reconnexion PostgreSQL...")
+            
+            # Fermer ancienne connexion
+            if self.pg_conn:
+                await self.pg_conn.close()
+            
+            # Nouvelle connexion
+            await self.connect_postgres()
+            
+            # Re-setup listeners
+            await self.pg_conn.add_listener('bot_events', self.handle_notification)
+            await self.pg_conn.add_listener('new_match', self.handle_new_match)
+            
+            logger.info("✅ Reconnexion réussie")
+            
+        except Exception as e:
+            logger.error(f"❌ Reconnexion échouée: {e}")
+            # Retry dans 5s
+            await asyncio.sleep(5)
+            await self.reconnect()
     
     async def stop(self):
         """Arrête le bridge"""
