@@ -13,7 +13,7 @@ class RedisContextManager:
     
     def __init__(self, redis_client: redis.Redis):
         self.redis = redis_client
-        self.CONTEXT_TTL = 10  # Secondes
+        self.CONTEXT_TTL = 20  # Secondes (DOIT être > GROUPING_DELAY)
         
     def _context_key(self, match_id: str) -> str:
         """Génère la clé Redis pour le contexte"""
