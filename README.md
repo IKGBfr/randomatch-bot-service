@@ -2,7 +2,7 @@
 
 > Service Python autonome pour gérer les conversations IA dans RandoMatch
 
-Bot conversationnel qui répond comme un humain dans l'app de dating pour randonneurs RandoMatch. Architecture professionnelle avec Railway + Redis + PostgreSQL NOTIFY.
+Bot conversationnel qui répond comme un humain dans l'app de dating pour randonneurs RandoMatch. Architecture professionnelle avec Railway + Redis + PostgreSQL NOTIFY. 
 
 ---
 

@@ -262,11 +262,11 @@ class MatchMonitor:
         """Envoie le premier message et met à jour l'initiation via REST API"""
         try:
             async with httpx.AsyncClient() as client:
-                # Vérifier si user a déjà envoyé un message
+                # ✅ Vérifier si DES MESSAGES EXISTENT (user OU bot)
                 url = f"{Config.SUPABASE_URL}/rest/v1/messages"
                 params = {
                     "match_id": f"eq.{initiation['match_id']}",
-                    "sender_id": f"eq.{initiation['user_id']}",
+                    # On ne filtre PAS par sender_id → vérifie TOUS les messages
                     "select": "id",
                     "limit": "1"
                 }
@@ -276,8 +276,8 @@ class MatchMonitor:
                 messages = resp.json()
                 
                 if messages:
-                    # User a envoyé en premier, annuler initiation
-                    logger.info(f"🚫 Initiation {initiation['id']} annulée (user a envoyé)")
+                    # Conversation existe déjà, annuler initiation
+                    logger.info(f"🚫 Initiation {initiation['id']} annulée (conversation existe déjà)")
                     
                     url = f"{Config.SUPABASE_URL}/rest/v1/bot_initiations"
                     params = {"id": f"eq.{initiation['id']}"}
