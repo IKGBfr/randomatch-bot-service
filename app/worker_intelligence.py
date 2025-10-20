@@ -353,14 +353,19 @@ TA RÉPONSE:"""
             
             logger.info(f"✅ Réponse: {response[:100]}...")
             
+            # ⚠️ DÉSACTIVÉ TEMPORAIREMENT - Évite doublons
             # Parser multi-messages UNIQUEMENT si séparateur explicite |||
-            if '|||' in response:
-                messages_to_send = [m.strip() for m in response.split('|||')]
-                logger.info(f"   🔀 Split par ||| : {len(messages_to_send)} messages")
-            else:
-                # Un seul message par défaut (évite contradictions)
-                messages_to_send = [response]
-                logger.info("   ➡️ Un seul message")
+            # if '|||' in response:
+            #     messages_to_send = [m.strip() for m in response.split('|||')]
+            #     logger.info(f"   🔀 Split par ||| : {len(messages_to_send)} messages")
+            # else:
+            #     # Un seul message par défaut (évite contradictions)
+            #     messages_to_send = [response]
+            #     logger.info("   ➡️ Un seul message")
+            
+            # FORCE UN SEUL MESSAGE jusqu'à fix du split
+            messages_to_send = [response.replace('|||', ' ')]
+            logger.info("   ➡️ Un seul message (split désactivé)")
             
             # =============================
             # PHASE 6: ENVOI AVEC TIMING

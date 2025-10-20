@@ -216,16 +216,12 @@ ANALYSE DU MESSAGE ACTUEL:
         # 5. Instructions adaptatives
         instructions = "\nINSTRUCTIONS:\n"
         
-        # Multi-messages : rare mais naturel
+        # Multi-messages : DÉSACTIVÉ TEMPORAIREMENT
         instructions += "\n⚠️ RÈGLE CRITIQUE - FORMAT RÉPONSE:\n"
-        instructions += "- PAR DÉFAUT : UN SEUL MESSAGE\n"
-        instructions += "- Multi-messages (2-3 max) UNIQUEMENT si:\n"
-        instructions += "  * Réaction spontanée + question (ex: 'Ah cool !' ||| 'Tu y vas souvent ?')\n"
-        instructions += "  * Réponse complexe qui nécessite pause naturelle\n"
-        instructions += "  * Ton émotionnel fort justifie plusieurs messages courts\n"
-        instructions += "- Utilise ||| pour séparer\n"
-        instructions += "- NE JAMAIS se contredire entre les messages\n"
-        instructions += "- NE JAMAIS répéter la même chose\n\n"
+        instructions += "- TOUJOURS UN SEUL MESSAGE COMPLET\n"
+        instructions += "- NE PAS utiliser ||| (désactivé)\n"
+        instructions += "- NE JAMAIS répéter ce que tu viens de dire\n"
+        instructions += "- NE JAMAIS poser 2x la même question\n\n"
         
         if analysis['urgency'] >= 4:
             instructions += "- Réponds rapidement, c'est urgent\n"
@@ -239,6 +235,11 @@ ANALYSE DU MESSAGE ACTUEL:
         instructions += "- Évite 'Ah...' systématique\n"
         instructions += "- Varie les réactions: 'Cool !', 'Vraiment ?', 'Sympa !', 'J'adore !'\n"
         instructions += "- Pas toujours 'Et toi ?' en fin de message\n"
+        instructions += "\n⚠️ ANTI-DOUBLON ABSOLU:\n"
+        instructions += "- RELIS les questions déjà posées ci-dessus\n"
+        instructions += "- Si tu as déjà posé une question, JAMAIS la reposer\n"
+        instructions += "- Varie complètement tes questions\n"
+        instructions += "- Exemple: Si tu as demandé 'nature ou ville?', ne JAMAIS redemander\n"
         
         # Assembler
         full_prompt = f"""

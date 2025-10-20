@@ -120,11 +120,16 @@ class BridgeIntelligence:
                     
                     return  # Ne pas pousser maintenant
             
-            # Nouveau contexte ou trop lent
-            await self.context_manager.init_context(match_id, message)
+            # Nouveau contexte : démarrer grouping (ne PAS pousser immédiatement)
+            context = await self.context_manager.init_context(match_id, message)
             
-            # Pousser immédiatement (premier message)
-            await self.push_to_queue(message)
+            # Démarrer timer pour voir si d'autres messages suivent
+            logger.info(f"⏰ Nouveau message, démarrage timer {self.GROUPING_DELAY}s")
+            asyncio.create_task(self.delayed_push(match_id))
+            
+            # Marquer timer comme démarré
+            context['timer_started'] = True
+            await self.context_manager.set_context(match_id, context)
             
         except Exception as e:
             logger.error(f"❌ Erreur notification: {e}")
