@@ -22,6 +22,7 @@ from app.analysis import message_analyzer
 from app.utils.timing import timing_engine
 from app.exit_manager import ExitManager
 from app.prompt_builder import prompt_builder
+from app.message_monitor import MessageMonitor
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -233,6 +234,10 @@ TA RÉPONSE:"""
             logger.info(f"   Message: {user_message[:100]}")
             logger.info("=" * 60)
             
+            # Créer monitor pour détecter nouveaux messages
+            monitor = MessageMonitor(self.supabase)
+            initial_message_count = 0  # Sera mis à jour après pre-processing
+            
             # =============================
             # PHASE 1: PRE-PROCESSING
             # =============================
@@ -277,6 +282,10 @@ TA RÉPONSE:"""
             logger.info(f"   Tone: {analysis['emotional_tone']}")
             logger.info(f"   Multi-messages: {analysis['requires_multi_messages']}")
             
+            # Enregistrer nombre initial de messages pour monitoring
+            initial_message_count = len(context['history'])
+            logger.info(f"   📊 Base monitoring: {initial_message_count} messages")
+            
             # =============================
             # PHASE 3: TIMING - RÉFLEXION
             # =============================
@@ -289,8 +298,31 @@ TA RÉPONSE:"""
             )
             
             logger.info(f"   Délai réflexion: {thinking_delay}s")
+            
+            # Démarrer monitoring en arrière-plan pendant réflexion
+            logger.info(f"👁️  Démarrage monitoring pendant réflexion...")
+            monitoring_task = asyncio.create_task(
+                monitor.start_monitoring(match_id, initial_message_count)
+            )
+            
             logger.info(f"⏳ Attente {thinking_delay}s (temps de réflexion)...")
             await asyncio.sleep(thinking_delay)
+            
+            # Arrêter monitoring
+            monitor.stop_monitoring()
+            
+            # CHECKPOINT 1 : Nouveaux messages pendant réflexion ?
+            if monitor.has_new_messages():
+                logger.warning("⚠️ Nouveaux messages détectés pendant réflexion → ABANDON")
+                logger.info("📨 Message repousé pour retraitement complet")
+                
+                await asyncio.sleep(2)  # Court délai
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                else:
+                    logger.warning("❌ Trop de retry, abandon définitif")
+                return  # STOP
             
             # RE-VÉRIFIER : User tape-t-il encore ? Nouveaux messages ?
             logger.info("\n🔍 Vérification finale avant génération...")
@@ -352,6 +384,26 @@ TA RÉPONSE:"""
             )
             
             logger.info(f"✅ Réponse: {response[:100]}...")
+            
+            # CHECKPOINT 2 : Nouveaux messages après génération ?
+            logger.info("🔍 Vérification après génération...")
+            has_new = await monitor.check_once(match_id, initial_message_count)
+            
+            if has_new:
+                logger.warning("⚠️ Nouveaux messages après génération → NE PAS ENVOYER")
+                logger.info("📨 Message repousé pour retraitement avec nouveau contexte")
+                
+                await self.deactivate_typing(bot_id, match_id)  # Désactiver typing
+                
+                await asyncio.sleep(3)  # Délai plus long
+                event_data['retry_count'] = event_data.get('retry_count', 0) + 1
+                if event_data['retry_count'] <= 5:
+                    await self.redis_client.rpush('bot_messages', json.dumps(event_data))
+                else:
+                    logger.warning("❌ Trop de retry, abandon définitif")
+                return  # STOP
+            
+            logger.info("✅ Pas de nouveaux messages, on peut envoyer")
             
             # ⚠️ DÉSACTIVÉ TEMPORAIREMENT - Évite doublons
             # Parser multi-messages UNIQUEMENT si séparateur explicite |||

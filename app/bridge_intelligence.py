@@ -27,7 +27,7 @@ class BridgeIntelligence:
         self.match_monitor = None
         self.supabase_client = None
         self.running = False
-        self.GROUPING_DELAY = 8  # Secondes (plus long pour messages rapides)
+        self.GROUPING_DELAY = 15  # Secondes (laisser temps à user de finir)
         
     async def connect_postgres(self):
         """Connexion PostgreSQL"""
