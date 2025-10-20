@@ -276,13 +276,26 @@ TA RÉPONSE:"""
             try:
                 if self.response_cache:
                     await self.response_cache.clear_generating(match_id)
-            except:
-                pass
+                    logger.info("🧹 Cache génération cleared (erreur)")
+            except Exception as cache_err:
+                logger.error(f"❌ Erreur clear cache: {cache_err}")
                 
         finally:
             # ============================================
             # 🔒 TOUJOURS LIBÉRER LE LOCK REDIS
             # ============================================
+            
+            # 🔧 SAFETY: Clear cache génération (au cas où)
+            try:
+                if hasattr(self, 'response_cache') and self.response_cache:
+                    # Vérifier si toujours en génération
+                    is_gen = await self.response_cache.is_generating(match_id)
+                    if is_gen:
+                        await self.response_cache.clear_generating(match_id)
+                        logger.warning("⚠️ Cache génération still set, cleared (finally)")
+            except Exception as safety_err:
+                logger.error(f"❌ Safety clear cache failed: {safety_err}")
+            
             await self.conversation_lock.release(match_id)
             logger.info(f"🔓 Lock Redis libéré pour {match_id[:8]}")
     
@@ -355,6 +368,10 @@ TA RÉPONSE:"""
         if context['is_typing']:
             logger.info("⚠️ User tape encore → ABANDON")
             
+            # 🔧 Clear cache avant de repousser
+            await self.response_cache.clear_generating(match_id)
+            logger.info("🧹 Cache génération cleared (user typing)")
+            
             await asyncio.sleep(5)
             event_data['retry_count'] = event_data.get('retry_count', 0) + 1
             
@@ -423,6 +440,10 @@ TA RÉPONSE:"""
             # Arrêter monitoring
             await self.continuous_monitor.stop()
             
+            # 🔧 CRITICAL: Clear cache génération
+            await self.response_cache.clear_generating(match_id)
+            logger.info("🧹 Cache génération cleared (annulation)")
+            
             # Repousser
             await asyncio.sleep(3)
             event_data['retry_count'] = event_data.get('retry_count', 0) + 1
@@ -485,6 +506,10 @@ TA RÉPONSE:"""
             await self.continuous_monitor.stop()
             await self.deactivate_typing(bot_id, match_id)
             
+            # 🔧 CRITICAL: Clear cache génération
+            await self.response_cache.clear_generating(match_id)
+            logger.info("🧹 Cache génération cleared (annulation)")
+            
             await asyncio.sleep(3)
             event_data['retry_count'] = event_data.get('retry_count', 0) + 1
             if event_data['retry_count'] <= 5:
@@ -522,6 +547,10 @@ TA RÉPONSE:"""
                 await self.continuous_monitor.stop()
                 await self.deactivate_typing(bot_id, match_id)
                 
+                # 🔧 CRITICAL: Clear cache génération
+                await self.response_cache.clear_generating(match_id)
+                logger.info("🧹 Cache génération cleared (annulation)")
+                
                 # Repousser
                 await asyncio.sleep(3)
                 event_data['retry_count'] = event_data.get('retry_count', 0) + 1
@@ -547,6 +576,10 @@ TA RÉPONSE:"""
                 logger.warning(f"⚠️ Nouveaux messages juste avant envoi → ANNULATION")
                 await self.continuous_monitor.stop()
                 await self.deactivate_typing(bot_id, match_id)
+                
+                # 🔧 CRITICAL: Clear cache génération
+                await self.response_cache.clear_generating(match_id)
+                logger.info("🧹 Cache génération cleared (annulation)")
                 
                 await asyncio.sleep(3)
                 event_data['retry_count'] = event_data.get('retry_count', 0) + 1
