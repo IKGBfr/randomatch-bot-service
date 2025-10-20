@@ -198,11 +198,27 @@ MÉMOIRE DE CETTE PERSONNE:
         # 3. Historique COMPLET (tous les messages chargés)
         logger.info(f"   📚 Historique dans prompt: {len(history)} messages")
         
-        history_context = "HISTORIQUE COMPLET DE LA CONVERSATION:\n\n"
+        # CLARIFIER qui est qui dans l'historique
+        bot_name = bot_profile.get('first_name', 'Camille')
+        
+        history_context = f"""HISTORIQUE COMPLET DE LA CONVERSATION:
+(Tu es {bot_name}. Les messages marqués "TOI:" sont TES messages passés)
+
+"""
+        
         for msg in history:
-            name = msg.get('profiles', {}).get('first_name', 'Inconnu')
+            sender_name = msg.get('profiles', {}).get('first_name', 'Inconnu')
+            is_bot = msg.get('profiles', {}).get('is_bot', False)
             content = msg['content']
-            history_context += f"{name}: {content}\n"
+            
+            if is_bot:
+                # C'est le bot qui a parlé
+                history_context += f"TOI ({bot_name}): {content}\n"
+            else:
+                # C'est l'user qui a parlé
+                history_context += f"{sender_name}: {content}\n"
+        
+        history_context += "\n"
         
         # 4. Analyse contextuelle
         analysis_context = f"""
@@ -216,6 +232,28 @@ ANALYSE DU MESSAGE ACTUEL:
         # 5. Instructions adaptatives
         instructions = "\nINSTRUCTIONS:\n"
         
+        # 🆕 CONTEXTE CRITIQUE : Comprendre la situation actuelle
+        instructions += "\n🚨 CONTEXTE ACTUEL CRITIQUE:\n"
+        
+        # Identifier le dernier message du bot
+        bot_messages = [msg for msg in history if msg.get('profiles', {}).get('is_bot')]
+        if bot_messages:
+            last_bot_msg = bot_messages[-1]['content']
+            instructions += f"- TON DERNIER MESSAGE était: \"{last_bot_msg}\"\n"
+            instructions += "- L'user RÉPOND maintenant à ce message\n"
+            instructions += "- NE PAS répéter ce que tu viens de dire\n"
+            
+            # Cas spécifique : Bot a initié avec "Salut"
+            if 'salut' in last_bot_msg.lower() or 'hello' in last_bot_msg.lower() or 'hey' in last_bot_msg.lower():
+                instructions += "- Tu as DÉJÀ dit bonjour/salut\n"
+                instructions += "- NE PAS redire 'Salut' maintenant\n"
+                instructions += "- Si user demande 'Et toi ?', RÉPONDS À LA QUESTION\n"
+                instructions += "- Exemple BON: 'Ça va bien ! Et toi ?' ou 'Bien, merci'\n"
+                instructions += "- Exemple MAUVAIS: 'Salut ! Et toi ?' (tu as déjà dit salut!)\n\n"
+        else:
+            instructions += "- C'est possiblement le début de la conversation\n\n"
+        
+        instructions += "\n"
         # Multi-messages : DÉSACTIVÉ TEMPORAIREMENT
         instructions += "\n⚠️ RÈGLE CRITIQUE - FORMAT RÉPONSE:\n"
         instructions += "- TOUJOURS UN SEUL MESSAGE COMPLET\n"
@@ -258,10 +296,17 @@ ANALYSE DU MESSAGE ACTUEL:
         instructions += "- Varie les réactions: 'Cool !', 'Vraiment ?', 'Sympa !', 'J'adore !'\n"
         instructions += "- Pas toujours 'Et toi ?' en fin de message\n"
         instructions += "\n⚠️ ANTI-DOUBLON ABSOLU:\n"
-        instructions += "- RELIS les questions déjà posées ci-dessus\n"
+        instructions += "- RELIS l'historique COMPLET ci-dessus\n"
+        instructions += "- IDENTIFIE ce que TU (TOI:) as déjà dit\n"
+        instructions += "- NE JAMAIS répéter tes propres messages\n"
         instructions += "- Si tu as déjà posé une question, JAMAIS la reposer\n"
         instructions += "- Varie complètement tes questions\n"
         instructions += "- Exemple: Si tu as demandé 'nature ou ville?', ne JAMAIS redemander\n"
+        instructions += "\n🎯 RÈGLE D'OR:\n"
+        instructions += "- Si user répond à TA question, reconnais-le et continue naturellement\n"
+        instructions += "- Si user te pose une question, RÉPONDS-Y directement\n"
+        instructions += "- Exemple: User dit 'Et toi ?' → Réponds 'Ça va bien !' ou similaire\n"
+        instructions += "- NE PAS renvoyer la question si c'est toi qui l'as posée en premier\n"
         
         # Assembler
         full_prompt = f"""

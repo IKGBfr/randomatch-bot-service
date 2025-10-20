@@ -192,6 +192,42 @@ class SupabaseClient:
             logger.error(f"❌ Erreur FETCH: {e}")
             return []
     
+    async def fetch_one(
+        self,
+        query: str,
+        *params
+    ) -> Optional[Dict]:
+        """Exécuter une requête SQL et retourner un seul résultat"""
+        try:
+            if not self.pool:
+                await self.connect()
+            
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(query, *params)
+                return dict(row) if row else None
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur FETCH_ONE: {e}")
+            return None
+    
+    async def execute(
+        self,
+        query: str,
+        *params
+    ) -> bool:
+        """Exécuter une requête SQL sans retour de résultat"""
+        try:
+            if not self.pool:
+                await self.connect()
+            
+            async with self.pool.acquire() as conn:
+                await conn.execute(query, *params)
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur EXECUTE: {e}")
+            return False
+    
     async def close(self):
         """Fermer le pool"""
         if self.pool:

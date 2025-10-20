@@ -235,7 +235,7 @@ class ResponseCache:
         # Check chaque réponse récente
         for resp_data in responses:
             # Comparer user_message pour voir si même contexte
-            user_similarity = self._calculate_similarity(
+            user_similarity = self._calculate_text_similarity(
                 user_message,
                 resp_data['user_message']
             )
