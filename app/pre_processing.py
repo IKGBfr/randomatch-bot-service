@@ -20,7 +20,7 @@ class PreProcessor:
     
     def __init__(self, supabase: SupabaseClient):
         self.supabase = supabase
-        self.MAX_HISTORY_MESSAGES = 50
+        self.MAX_HISTORY_MESSAGES = 200  # Grok 4 Fast: 2M tokens context window
         self.TYPING_CHECK_DELAY = 3  # Secondes - attendre plus longtemps
         self.MAX_TYPING_CHECKS = 3  # Vérifier 3 fois maximum
     

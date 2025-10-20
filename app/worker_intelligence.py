@@ -21,6 +21,7 @@ from app.pre_processing import PreProcessor
 from app.analysis import message_analyzer
 from app.utils.timing import timing_engine
 from app.exit_manager import ExitManager
+from app.prompt_builder import prompt_builder
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -336,7 +337,8 @@ TA RÉPONSE:"""
             # =============================
             logger.info("\n🧠 Phase 5: Génération réponse IA...")
             
-            prompt = self.build_prompt(
+            # Utiliser le nouveau prompt builder avec anti-répétition
+            prompt = prompt_builder.build_full_prompt(
                 context['bot_profile'],
                 context['memory'],
                 context['history'],
@@ -351,19 +353,12 @@ TA RÉPONSE:"""
             
             logger.info(f"✅ Réponse: {response[:100]}...")
             
-            # Parser multi-messages si nécessaire
-            # Accepter plusieurs formats de séparateurs
+            # Parser multi-messages UNIQUEMENT si séparateur explicite |||
             if '|||' in response:
                 messages_to_send = [m.strip() for m in response.split('|||')]
                 logger.info(f"   🔀 Split par ||| : {len(messages_to_send)} messages")
-            elif '[MSG_BREAK]' in response:
-                messages_to_send = [m.strip() for m in response.split('[MSG_BREAK]')]
-                logger.info(f"   🔀 Split par [MSG_BREAK] : {len(messages_to_send)} messages")
-            elif '\n\n' in response and len(response.split('\n\n')) <= 4:
-                # Double newline peut aussi séparer des messages courts
-                messages_to_send = [m.strip() for m in response.split('\n\n') if m.strip()]
-                logger.info(f"   🔀 Split par \\n\\n : {len(messages_to_send)} messages")
             else:
+                # Un seul message par défaut (évite contradictions)
                 messages_to_send = [response]
                 logger.info("   ➡️ Un seul message")
             
