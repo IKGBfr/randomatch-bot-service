@@ -374,6 +374,17 @@ TA RÉPONSE:"""
             logger.info("")  # Ligne vide
             
             for i, msg in enumerate(messages_to_send):
+                # VÉRIFIER si user tape avant d'envoyer ce message
+                logger.info(f"   🔍 Vérification typing avant msg {i+1}...")
+                is_typing_now = await self.pre_processor.check_user_typing(
+                    match_id, user_id, max_retries=1
+                )
+                
+                if is_typing_now:
+                    logger.info(f"   ⚠️ User tape avant envoi msg {i+1} → ABANDON messages restants")
+                    await self.deactivate_typing(bot_id, match_id)
+                    break  # Arrêter l'envoi, ne pas envoyer les messages restants
+                
                 # Calculer temps frappe
                 typing_time = timing_engine.calculate_typing_time(msg)
                 logger.info(f"   ⏱️ Frappe msg {i+1}: {typing_time}s")
