@@ -65,6 +65,15 @@ class MatchMonitor:
                 logger.debug("Match ne contient pas de bot, skip")
                 return None
             
+            # ✅ CRITIQUE : Vérifier si conversation existe déjà
+            existing_messages = await self._check_existing_messages(match['id'])
+            if existing_messages > 0:
+                logger.info(
+                    f"🚫 Match {match['id']} a déjà {existing_messages} message(s), "
+                    f"pas d'initiation (conversation déjà lancée par user)"
+                )
+                return None
+            
             # Décision : faut-il initier ?
             if not self._should_initiate():
                 logger.info(f"🎲 Pas d'initiation pour match {match['id']} (probabilité)")
@@ -193,6 +202,33 @@ class MatchMonitor:
                 'first_name': 'Utilisateur',
                 'interests': []
             }
+    
+    async def _check_existing_messages(self, match_id: str) -> int:
+        """
+        Vérifie s'il y a déjà eu des messages dans ce match.
+        
+        Args:
+            match_id: ID du match
+            
+        Returns:
+            int: Nombre de messages existants (0 si aucun)
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                url = f"{Config.SUPABASE_URL}/rest/v1/messages"
+                params = {
+                    "match_id": f"eq.{match_id}",
+                    "select": "id"
+                }
+                
+                resp = await client.get(url, headers=self.rest_headers, params=params)
+                resp.raise_for_status()
+                messages = resp.json()
+                
+                return len(messages)
+        except Exception as e:
+            logger.error(f"Erreur check_existing_messages: {e}")
+            return 0  # Sécurité : si erreur, on suppose 0 messages
     
     async def _create_initiation(
         self,
