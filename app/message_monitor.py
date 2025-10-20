@@ -58,7 +58,8 @@ class MessageMonitor:
     async def _get_message_count(self, match_id: str) -> int:
         """Compte les messages dans un match"""
         try:
-            result = await self.supabase.execute(
+            # Utiliser fetch_one car SELECT retourne un résultat
+            result = await self.supabase.fetch_one(
                 """
                 SELECT COUNT(*) as count
                 FROM messages
@@ -67,8 +68,8 @@ class MessageMonitor:
                 match_id
             )
             
-            if result and len(result) > 0:
-                return result[0]['count']
+            if result:
+                return result['count']
             return 0
             
         except Exception as e:
