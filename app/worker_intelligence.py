@@ -409,6 +409,83 @@ TA RÉPONSE:"""
             return
         
         # =============================
+        # PHASE 1.5: VÉRIFICATION LIMITE/EXIT (NOUVEAU)
+        # =============================
+        logger.info("\n🚨 Phase 1.5: Vérification limite bot...")
+        
+        match_info = await self.supabase.fetch_one(
+            """
+            SELECT bot_messages_count, bot_messages_limit, bot_exit_reason
+            FROM matches
+            WHERE id = $1
+            """,
+            match_id
+        )
+        
+        if not match_info:
+            logger.error(f"❌ Match {match_id} non trouvé")
+            await self.response_cache.clear_generating(match_id)
+            return
+        
+        count = match_info['bot_messages_count'] or 0
+        limit = match_info['bot_messages_limit'] or 25
+        exit_reason = match_info['bot_exit_reason']
+        
+        logger.info(f"   📊 Messages bot: {count}/{limit}")
+        logger.info(f"   🚪 Exit reason: {exit_reason or 'N/A'}")
+        
+        # Check si déjà en exit
+        if exit_reason:
+            logger.warning(f"   ⚠️ Bot déjà en exit: {exit_reason}")
+            logger.warning("   ❌ SKIP génération (conversation terminée)")
+            await self.response_cache.clear_generating(match_id)
+            return
+        
+        # Check si limite atteinte
+        if count >= limit:
+            logger.warning(f"   ⚠️ Limite atteinte: {count}/{limit}")
+            logger.warning("   🚪 Génération message d'exit au lieu de réponse normale")
+            
+            # Générer exit immédiatement
+            should_exit, reason = await self.exit_manager.check_should_exit(
+                match_id,
+                self.supabase
+            )
+            
+            if should_exit:
+                logger.info(f"   📝 Exit confirmé: {reason}")
+                
+                exit_messages = self.exit_manager.generate_exit_sequence(reason)
+                
+                logger.info(f"\n📤 Envoi séquence exit ({len(exit_messages)} messages)...")
+                
+                for i, exit_msg in enumerate(exit_messages, 1):
+                    delay = exit_msg['delay']
+                    logger.info(f"   ⏳ Attente {delay}s avant msg {i}...")
+                    await asyncio.sleep(delay)
+                    
+                    await self.activate_typing(bot_id, match_id)
+                    
+                    typing_time = timing_engine.calculate_typing_time(exit_msg['text'])
+                    logger.info(f"   ⌨️ Frappe {typing_time}s: {exit_msg['text'][:50]}...")
+                    await asyncio.sleep(typing_time)
+                    
+                    await self.send_message(match_id, bot_id, exit_msg['text'])
+                    logger.info(f"   ✅ Exit message {i} envoyé")
+                    
+                    await self.deactivate_typing(bot_id, match_id)
+                
+                await self.exit_manager.mark_as_exited(match_id, reason, self.supabase)
+                
+                logger.info("   🎯 Bot a quitté la conversation (limite atteinte)")
+            
+            # Cleanup et stop
+            await self.response_cache.clear_generating(match_id)
+            return
+        
+        logger.info("   ✅ Limite OK, génération autorisée")
+        
+        # =============================
         # PHASE 2: ANALYSE
         # =============================
         logger.info("\n🧠 Phase 2: Analyse contextuelle...")
