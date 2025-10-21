@@ -6,24 +6,30 @@ import logging
 import asyncio
 import random
 import httpx
+import json
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 from app.initiation_builder import InitiationBuilder
+from app.relance_builder import RelanceBuilder
 from app.config import Config
+import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
 
 class MatchMonitor:
     """Surveille les nouveaux matchs et crée des initiations bot"""
     
-    def __init__(self, supabase_client):
+    def __init__(self, supabase_client, redis_client=None):
         """
         Args:
             supabase_client: Notre SupabaseClient custom (asyncpg)
+            redis_client: Client Redis pour pusher relances
         """
         self.supabase = supabase_client
+        self.redis_client = redis_client
         self.initiation_builder = InitiationBuilder()
+        self.relance_builder = RelanceBuilder()
         
         # Probabilité d'initiation (configurable)
         self.INITIATION_PROBABILITY = Config.INITIATION_PROBABILITY
@@ -361,3 +367,152 @@ class MatchMonitor:
             
         except Exception as e:
             logger.error(f"❌ Erreur send_initiation {initiation['id']}: {e}")
+    
+    async def check_abandoned_conversations(self):
+        """
+        Détecte conversations où user a envoyé message sans réponse depuis 2-4h.
+        Génère une relance naturelle et pousse dans queue Redis.
+        
+        À appeler régulièrement (ex: toutes les 30-60s).
+        """
+        if not self.redis_client:
+            logger.warning("Redis client non disponible, skip abandoned check")
+            return
+        
+        try:
+            # Chercher matches actifs où dernier message = user
+            query = """
+            WITH last_messages AS (
+                SELECT DISTINCT ON (match_id)
+                    match_id,
+                    sender_id,
+                    created_at,
+                    content
+                FROM messages
+                WHERE match_id IN (
+                    SELECT id FROM matches 
+                    WHERE bot_exited_at IS NULL
+                )
+                ORDER BY match_id, created_at DESC
+            )
+            SELECT 
+                lm.match_id,
+                lm.sender_id,
+                lm.created_at as last_message_at,
+                lm.content as last_message_content,
+                m.user1_id,
+                m.user2_id,
+                EXTRACT(EPOCH FROM (NOW() - lm.created_at))/3600 as hours_since
+            FROM last_messages lm
+            JOIN matches m ON m.id = lm.match_id
+            WHERE 
+                -- Dernier message il y a 2-48h
+                lm.created_at < NOW() - INTERVAL '2 hours'
+                AND lm.created_at > NOW() - INTERVAL '48 hours'
+                -- Sender n'est pas un bot
+                AND lm.sender_id NOT IN (:bot_camille_id, :bot_paul_id)
+            ORDER BY lm.created_at ASC
+            LIMIT 5
+            """
+            
+            params = {
+                'bot_camille_id': Config.BOT_CAMILLE_ID or '',
+                'bot_paul_id': Config.BOT_PAUL_ID or ''
+            }
+            
+            abandoned = await self.supabase.fetch_all(query, params)
+            
+            if not abandoned:
+                return
+            
+            logger.info(f"🔍 {len(abandoned)} conversation(s) potentiellement abandonnée(s)")
+            
+            for conv in abandoned:
+                await self._process_abandoned_conversation(conv)
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur check_abandoned_conversations: {e}", exc_info=True)
+    
+    async def _process_abandoned_conversation(self, conv: Dict):
+        """
+        Traite une conversation abandonnée : vérifie + génère relance.
+        
+        Args:
+            conv: Dict avec match_id, sender_id, hours_since, etc.
+        """
+        try:
+            match_id = conv['match_id']
+            hours_since = conv['hours_since']
+            
+            logger.info(f"📋 Conversation {match_id}: dernier msg il y a {hours_since:.1f}h")
+            
+            # Identifier bot et user
+            bot_id, user_id = self._identify_bot_and_user({
+                'user1_id': conv['user1_id'],
+                'user2_id': conv['user2_id']
+            })
+            
+            if not bot_id:
+                logger.debug(f"Match {match_id} ne contient pas de bot, skip")
+                return
+            
+            # Vérifier si déjà relancé récemment (check dans Redis)
+            last_relance_key = f"last_relance:{match_id}"
+            last_relance = await self.redis_client.get(last_relance_key)
+            
+            last_relance_hours = None
+            if last_relance:
+                last_relance_timestamp = float(last_relance)
+                last_relance_hours = (datetime.now().timestamp() - last_relance_timestamp) / 3600
+            
+            # Décider si relance nécessaire
+            if not self.relance_builder.should_send_relance(hours_since, last_relance_hours):
+                logger.info(f"Pas de relance nécessaire pour {match_id}")
+                return
+            
+            logger.info(f"✅ Relance nécessaire pour {match_id}")
+            
+            # Charger profils
+            bot_profile = await self._load_profile(bot_id)
+            user_profile = await self._load_profile(user_id)
+            
+            # Générer message de relance
+            relance_message = self.relance_builder.build_relance_message(
+                bot_profile,
+                user_profile,
+                hours_since
+            )
+            
+            # Créer event pour queue Redis
+            event_data = {
+                'match_id': match_id,
+                'bot_id': bot_id,
+                'sender_id': user_id,
+                'message_content': relance_message,
+                'type': 'relance',
+                'hours_since_last': hours_since
+            }
+            
+            # Push dans queue
+            await self.redis_client.rpush(
+                'bot_messages',
+                json.dumps(event_data)
+            )
+            
+            # Marquer relance envoyée (TTL 48h)
+            await self.redis_client.setex(
+                last_relance_key,
+                48 * 3600,  # 48h
+                str(datetime.now().timestamp())
+            )
+            
+            logger.info(
+                f"✅ Relance poussée dans queue: {match_id}\n"
+                f"   Bot: {bot_profile['first_name']}\n"
+                f"   User: {user_profile['first_name']}\n"
+                f"   Délai: {hours_since:.1f}h\n"
+                f"   Message: {relance_message}"
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur process_abandoned {conv.get('match_id')}: {e}", exc_info=True)

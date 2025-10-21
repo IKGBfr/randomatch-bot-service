@@ -17,9 +17,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def check_pending_initiations_loop(supabase_client):
+async def check_pending_initiations_loop(supabase_client, redis_client):
     """Boucle qui vérifie les initiations en attente toutes les 30s"""
-    monitor = MatchMonitor(supabase_client)  # Utilise notre SupabaseClient custom
+    monitor = MatchMonitor(supabase_client, redis_client)
     logger.info("🔍 Initiation Checker démarré (toutes les 30s)")
     
     while True:
@@ -29,6 +29,22 @@ async def check_pending_initiations_loop(supabase_client):
         except Exception as e:
             logger.error(f"Erreur check_pending_initiations: {e}")
             await asyncio.sleep(30)
+
+async def check_abandoned_conversations_loop(supabase_client, redis_client):
+    """Boucle qui détecte conversations abandonnées toutes les 60s"""
+    monitor = MatchMonitor(supabase_client, redis_client)
+    logger.info("🔄 Relance Checker démarré (toutes les 60s)")
+    
+    # Attendre 60s au démarrage pour laisser worker se stabiliser
+    await asyncio.sleep(60)
+    
+    while True:
+        try:
+            await monitor.check_abandoned_conversations()
+            await asyncio.sleep(60)
+        except Exception as e:
+            logger.error(f"Erreur check_abandoned_conversations: {e}")
+            await asyncio.sleep(60)
 
 async def main():
     """Lance worker messages + checker initiations en parallèle"""
@@ -46,6 +62,7 @@ async def main():
     logger.info("=" * 70)
     logger.info("📨 Worker Messages : bot_messages queue")
     logger.info("🔍 Initiation Checker : toutes les 30s")
+    logger.info("🔄 Relance Checker : toutes les 60s (2-48h inactif)")
     logger.info("🕐 Timing Adaptatif : Phase 4 activé")
     logger.info("=" * 70)
     
@@ -81,7 +98,8 @@ async def main():
         # Lancer en parallèle
         await asyncio.gather(
             message_loop(),
-            check_pending_initiations_loop(worker.supabase)
+            check_pending_initiations_loop(worker.supabase, worker.redis_client),
+            check_abandoned_conversations_loop(worker.supabase, worker.redis_client)
         )
     except KeyboardInterrupt:
         logger.info("\n⚠️  Interruption utilisateur")

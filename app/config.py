@@ -60,6 +60,11 @@ class Config:
     # Environment
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     
+    # Recovery Scheduler
+    RECOVERY_CHECK_INTERVAL_HOURS = os.getenv("RECOVERY_CHECK_INTERVAL_HOURS", "4")
+    RECOVERY_DAYS_BACK = os.getenv("RECOVERY_DAYS_BACK", "3")
+    RECOVERY_LIMIT = os.getenv("RECOVERY_LIMIT", "100")
+    
     # Alias snake_case pour compatibilité
     @property
     def bot_camille_id(self):
