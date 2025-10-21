@@ -410,17 +410,18 @@ class MatchMonitor:
                 lm.created_at < NOW() - INTERVAL '2 hours'
                 AND lm.created_at > NOW() - INTERVAL '48 hours'
                 -- Sender n'est pas un bot
-                AND lm.sender_id NOT IN (:bot_camille_id, :bot_paul_id)
+                AND lm.sender_id NOT IN ($1, $2)
             ORDER BY lm.created_at ASC
             LIMIT 5
             """
             
-            params = {
-                'bot_camille_id': Config.BOT_CAMILLE_ID or '',
-                'bot_paul_id': Config.BOT_PAUL_ID or ''
-            }
+            # Positional params pour asyncpg
+            bot_ids = [
+                Config.BOT_CAMILLE_ID or '', 
+                Config.BOT_PAUL_ID or ''
+            ]
             
-            abandoned = await self.supabase.fetch_all(query, params)
+            abandoned = await self.supabase.fetch(query, *bot_ids)
             
             if not abandoned:
                 return

@@ -138,7 +138,7 @@ class MissedMessagesRecovery:
         
         logger.info(f"🔍 Recherche conversations sans réponse (derniers {days_back} jours)...")
         
-        result = await self.supabase.fetch_all(query)
+        result = await self.supabase.fetch(query)
         
         if not result:
             logger.info("✅ Aucune conversation sans réponse trouvée")
