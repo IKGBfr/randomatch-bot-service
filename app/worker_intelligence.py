@@ -363,7 +363,7 @@ TA RÉPONSE:"""
             logger.info("🚨 Force response activé → Ignore cache")
         
         # =============================
-        # PHASE 0bis: CHECK CACHE (sauf si force_response)
+        # PHASE 0bis: CHECK CACHE (génération en cours)
         # =============================
         
         if not force_response:
@@ -374,18 +374,7 @@ TA RÉPONSE:"""
                 logger.warning("   → SKIP")
                 return
             
-            similar_response = await self.response_cache.find_similar_response(
-                match_id,
-                user_message
-            )
-            
-            if similar_response:
-                logger.warning("⚠️ Question similaire déjà traitée")
-                logger.warning(f"   Cache: {similar_response[:50]}")
-                logger.warning("   → SKIP")
-                return
-            
-            logger.info("✅ Pas de doublon, traitement normal")
+            logger.info("✅ Pas de génération en cours")
         else:
             logger.info("⚠️ Cache ignoré (force_response)")
         
