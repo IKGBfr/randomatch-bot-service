@@ -92,9 +92,9 @@ class RecoveryScheduler:
             
             # Afficher résumé
             for i, conv in enumerate(conversations, 1):
-                logger.info(f"[{i}/{len(conversations)}] Match {conv['match_id'][:8]}...")
-                logger.info(f"  ├─ Bot: {conv['bot_id'][:8]}...")
-                logger.info(f"  ├─ User: {conv['user_id'][:8]}...")
+                logger.info(f"[{i}/{len(conversations)}] Match {str(conv['match_id'])[:8]}...")
+                logger.info(f"  ├─ Bot: {str(conv['bot_id'])[:8]}...")
+                logger.info(f"  ├─ User: {str(conv['user_id'])[:8]}...")
                 logger.info(f"  ├─ Dernier msg: {conv['last_message_created_at']}")
                 logger.info(f"  ├─ Contenu: \"{conv['content'][:50]}...\"")
                 logger.info(f"  └─ Messages: {conv['messages_count']} (bot: {conv['bot_messages_count']}/{conv['bot_messages_limit']})")
@@ -109,7 +109,7 @@ class RecoveryScheduler:
                     recovered_count += 1
                     await asyncio.sleep(0.1)  # Rate limiting
                 except Exception as e:
-                    logger.error(f"❌ Erreur push {conv['match_id'][:8]}: {e}")
+                    logger.error(f"❌ Erreur push {str(conv['match_id'])[:8]}: {e}")
             
             logger.info(f"\n✅ {recovered_count} conversation(s) poussée(s) dans Redis")
             logger.info(f"⏳ Le worker va les traiter dans les prochaines minutes\n")

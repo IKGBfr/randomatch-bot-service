@@ -152,20 +152,20 @@ class MissedMessagesRecovery:
         """Push conversation dans Redis pour retraitement"""
         
         event = {
-            "match_id": conversation['match_id'],
-            "sender_id": conversation['user_id'],
-            "bot_id": conversation['bot_id'],
-            "message_id": conversation['message_id'],
+            "match_id": str(conversation['match_id']),
+            "sender_id": str(conversation['user_id']),
+            "bot_id": str(conversation['bot_id']),
+            "message_id": str(conversation['message_id']),
             "content": conversation['content'],
             "type": "recovery"  # Flag pour identifier récupération
         }
         
         if self.dry_run:
-            logger.info(f"[DRY-RUN] Pousserait dans queue: {event['match_id'][:8]}")
+            logger.info(f"[DRY-RUN] Pousserait dans queue: {str(conversation['match_id'])[:8]}")
             return
         
         await self.redis.rpush('bot_messages', json.dumps(event))
-        logger.info(f"✅ Poussé dans queue: {event['match_id'][:8]}")
+        logger.info(f"✅ Poussé dans queue: {str(conversation['match_id'])[:8]}")
     
     async def recover_conversations(
         self,
@@ -193,9 +193,9 @@ class MissedMessagesRecovery:
             
             for conv in conversations:
                 logger.info(f"""
-Match: {conv['match_id'][:8]}...
-├─ Bot: {conv['bot_id'][:8] if conv['bot_id'] else 'None'}...
-├─ User: {conv['user_id'][:8] if conv['user_id'] else 'None'}...
+Match: {str(conv['match_id'])[:8]}...
+├─ Bot: {str(conv['bot_id'])[:8] if conv['bot_id'] else 'None'}...
+├─ User: {str(conv['user_id'])[:8] if conv['user_id'] else 'None'}...
 ├─ Dernier msg user: {conv['last_message_created_at']}
 ├─ Contenu: "{conv['content'][:50]}..."
 ├─ Messages count: {conv['messages_count']}
