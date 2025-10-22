@@ -13,7 +13,6 @@ from aiohttp import web
 # Import des services
 from app.bridge_intelligence import main as bridge_main
 from app.main_worker import main as worker_main
-from app.supabase_client import supabase
 from app.redis_client import redis_client
 
 # Configuration logging structuré
@@ -72,7 +71,6 @@ class RobustBotService:
         logger.info("🔍 Vérification des connexions...")
         
         checks = {
-            'Supabase': self._check_supabase(),
             'Redis': self._check_redis(),
         }
         
@@ -87,15 +85,6 @@ class RobustBotService:
                 results[name] = False
         
         return all(results.values())
-    
-    async def _check_supabase(self) -> bool:
-        """Vérifie la connexion Supabase"""
-        try:
-            supabase.table("profiles").select("id").limit(1).execute()
-            return True
-        except Exception as e:
-            logger.error(f"Supabase check failed: {e}")
-            return False
     
     async def _check_redis(self) -> bool:
         """Vérifie la connexion Redis"""
