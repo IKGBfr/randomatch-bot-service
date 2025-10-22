@@ -1,6 +1,5 @@
 """
-Service unifié robuste avec monitoring, healthcheck et auto-reconnexion.
-Version production-ready avec gestion d'erreurs complète.
+Service unifié avec monitoring, healthcheck et auto-reconnexion.
 """
 import asyncio
 import logging
@@ -13,7 +12,6 @@ from aiohttp import web
 # Import des services
 from app.bridge_intelligence import main as bridge_main
 from app.main_worker import main as worker_main
-from app.redis_client import redis_client
 
 # Configuration logging structuré
 logging.basicConfig(
@@ -24,8 +22,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class RobustBotService:
-    """Service bot robuste avec monitoring et auto-recovery"""
+class BotService:
+    """Service bot avec monitoring et auto-recovery"""
     
     def __init__(self):
         self.bridge_task: Optional[asyncio.Task] = None
@@ -34,7 +32,6 @@ class RobustBotService:
         self.is_running = False
         self.start_time = datetime.utcnow()
         self.restart_count = 0
-        self.last_health_check = datetime.utcnow()
         
         # Stats
         self.stats = {
@@ -47,53 +44,16 @@ class RobustBotService:
     async def start(self):
         """Démarre le service complet"""
         logger.info("=" * 70)
-        logger.info("🚀 DÉMARRAGE SERVICE BOT ROBUSTE")
+        logger.info("🚀 DÉMARRAGE SERVICE BOT")
         logger.info("=" * 70)
-        
-        # Vérifier les connexions
-        if not await self._check_connections():
-            logger.error("❌ Échec vérification connexions")
-            sys.exit(1)
         
         self.is_running = True
         
         # Démarrer le healthcheck server
         await self._start_health_server()
         
-        # Démarrer les services avec retry logic
+        # Démarrer les services
         await self._start_services_with_retry()
-        
-        # Garder le service actif
-        await self._keep_alive()
-    
-    async def _check_connections(self) -> bool:
-        """Vérifie toutes les connexions au démarrage"""
-        logger.info("🔍 Vérification des connexions...")
-        
-        checks = {
-            'Redis': self._check_redis(),
-        }
-        
-        results = {}
-        for name, check in checks.items():
-            try:
-                results[name] = await check
-                status = "✅" if results[name] else "❌"
-                logger.info(f"{status} {name}")
-            except Exception as e:
-                logger.error(f"❌ {name}: {e}")
-                results[name] = False
-        
-        return all(results.values())
-    
-    async def _check_redis(self) -> bool:
-        """Vérifie la connexion Redis"""
-        try:
-            await redis_client.ping()
-            return True
-        except Exception as e:
-            logger.error(f"Redis check failed: {e}")
-            return False
     
     async def _start_health_server(self):
         """Démarre le serveur de health check pour Railway"""
@@ -116,9 +76,6 @@ class RobustBotService:
     
     async def _health_handler(self, request):
         """Endpoint health check"""
-        self.last_health_check = datetime.utcnow()
-        
-        # Vérifier que les services tournent
         bridge_ok = self.bridge_task and not self.bridge_task.done()
         worker_ok = self.worker_task and not self.worker_task.done()
         
@@ -167,7 +124,7 @@ class RobustBotService:
                     return_when=asyncio.FIRST_COMPLETED
                 )
                 
-                # Un service a crashé, on les redémarre tous
+                # Un service a crashé, redémarrage
                 logger.warning("⚠️ Un service s'est arrêté, redémarrage...")
                 self.restart_count += 1
                 
@@ -175,11 +132,10 @@ class RobustBotService:
                 for task in pending:
                     task.cancel()
                 
-                # Attendre un peu avant de redémarrer
                 await asyncio.sleep(5)
                 
             except Exception as e:
-                logger.error(f"❌ Erreur dans start_services: {e}", exc_info=True)
+                logger.error(f"❌ Erreur: {e}", exc_info=True)
                 self.stats['errors_count'] += 1
                 self.stats['last_error'] = str(e)
                 await asyncio.sleep(10)
@@ -202,35 +158,21 @@ class RobustBotService:
                 retry_count += 1
                 self.stats['errors_count'] += 1
                 self.stats['last_error'] = f"{name}: {str(e)}"
-                logger.error(
-                    f"❌ {name} erreur (tentative {retry_count}/{max_retries}): {e}",
-                    exc_info=True
-                )
+                logger.error(f"❌ {name} erreur (tentative {retry_count}/{max_retries}): {e}", exc_info=True)
                 
                 if retry_count < max_retries:
-                    wait_time = min(2 ** retry_count, 60)  # Exponential backoff
+                    wait_time = min(2 ** retry_count, 60)
                     logger.info(f"⏳ Attente {wait_time}s avant retry...")
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"💀 {name} a atteint le nombre max de retries")
+                    logger.error(f"💀 {name} a atteint le max de retries")
                     break
-    
-    async def _keep_alive(self):
-        """Garde le service actif"""
-        try:
-            # Attendre indéfiniment
-            while self.is_running:
-                await asyncio.sleep(60)
-                logger.debug(f"💓 Service actif - Uptime: {(datetime.utcnow() - self.start_time).total_seconds():.0f}s")
-        except asyncio.CancelledError:
-            logger.info("🛑 Keep alive arrêté")
     
     async def stop(self):
         """Arrête proprement le service"""
         logger.info("🛑 Arrêt du service...")
         self.is_running = False
         
-        # Annuler les tasks
         for task in [self.bridge_task, self.worker_task]:
             if task and not task.done():
                 task.cancel()
@@ -239,7 +181,6 @@ class RobustBotService:
                 except asyncio.CancelledError:
                     pass
         
-        # Arrêter le health server
         if self.health_server:
             await self.health_server.cleanup()
         
@@ -248,9 +189,8 @@ class RobustBotService:
 
 async def main():
     """Point d'entrée principal"""
-    service = RobustBotService()
+    service = BotService()
     
-    # Gestion des signaux pour arrêt propre
     def signal_handler(sig, frame):
         logger.info(f"📡 Signal {sig} reçu")
         asyncio.create_task(service.stop())
