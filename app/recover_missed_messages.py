@@ -156,7 +156,7 @@ class MissedMessagesRecovery:
             "sender_id": str(conversation['user_id']),
             "bot_id": str(conversation['bot_id']),
             "message_id": str(conversation['message_id']),
-            "content": conversation['content'],
+            "message_content": conversation['content'],  # ← FIX: Renommé content -> message_content
             "type": "recovery"  # Flag pour identifier récupération
         }
         

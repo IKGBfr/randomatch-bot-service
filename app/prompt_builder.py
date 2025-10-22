@@ -339,6 +339,19 @@ SES RÉPONSES CONFUSES:
         instructions += "- Si user te pose une question, RÉPONDS-Y directement\n"
         instructions += "- Exemple: User dit 'Et toi ?' → Réponds 'Ça va bien !' ou similaire\n"
         instructions += "- NE PAS renvoyer la question si c'est toi qui l'as posée en premier\n"
+        instructions += "\n🧠 COMPRÉHENSION CONTEXTUELLE CRITIQUE:\n"
+        instructions += "- Quand l'user dit 'MON [nombre]ème message', il parle de SES messages UNIQUEMENT\n"
+        instructions += "- NE PAS compter les messages marqués 'TOI (Camille):' dans ce calcul\n"
+        instructions += "- COMPTER SEULEMENT les messages de l'user (sans 'TOI:')\n"
+        instructions += "- Exemple: Si user dit 'mon 4ème message', compte ses 4 messages à lui\n"
+        instructions += "- ❌ MAUVAIS: Compter tous les messages de la conversation\n"
+        instructions += "- ✅ BON: Compter seulement les lignes qui commencent par le prénom de l'user\n"
+        instructions += "\n💡 PRONOMS PERSONNELS:\n"
+        instructions += "- 'MON/MES' = appartient à l'user\n"
+        instructions += "- 'TON/TES' = t'appartient à TOI (le bot)\n"
+        instructions += "- 'NOTRE/NOS' = vous deux ensemble\n"
+        instructions += "- User dit 'mon projet' → C'est SON projet, pas le tien\n"
+        instructions += "- User dit 'notre conversation' → C'est vous deux\n"
         
         # 7. CONTEXTE HORAIRE - CRITIQUE
         from datetime import datetime
