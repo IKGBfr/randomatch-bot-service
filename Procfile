@@ -1,1 +1,1 @@
-web: python -m app.robust_service
+web: python -m app.main
