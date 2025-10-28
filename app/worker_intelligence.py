@@ -219,17 +219,35 @@ TA RÉPONSE:"""
             logger.error(f"❌ Erreur deactivate typing: {e}")
     
     async def send_message(self, match_id: str, bot_id: str, content: str):
-        """Envoie un message"""
+        """
+        Envoie un message (avec interception [UNMATCH])
+        
+        Si le message contient [UNMATCH], le marqueur est retiré,
+        l'unmatch est déclenché, et seul le message propre est envoyé.
+        """
         try:
+            # 🆕 INTERCEPTION [UNMATCH]
+            from app.unmatch_handler import unmatch_handler
+            
+            clean_content, unmatch_triggered = await unmatch_handler.process_message_with_unmatch(
+                content,
+                match_id,
+                bot_id
+            )
+            
+            # Envoyer le message propre (sans [UNMATCH])
             await self.supabase.insert('messages', {
                 'match_id': match_id,
                 'sender_id': bot_id,
-                'content': content,
+                'content': clean_content,
                 'type': 'text',
                 'status': 'sent'
             })
             
-            logger.info(f"✅ Message envoyé: {content[:50]}...")
+            if unmatch_triggered:
+                logger.info(f"✅ Message envoyé + Unmatch déclenché: {clean_content[:50]}...")
+            else:
+                logger.info(f"✅ Message envoyé: {clean_content[:50]}...")
             
         except Exception as e:
             logger.error(f"❌ Erreur envoi message: {e}")
