@@ -190,13 +190,13 @@ class ScheduledProcessor:
                 await self._delete_from_queue(msg['id'])
                 return
             
-            # Créer payload pour le worker
+            # Créer payload pour le worker (convertir UUIDs en strings)
             payload = {
                 'type': 'scheduled',
-                'message_id': message['id'],
-                'match_id': message['match_id'],
-                'bot_id': bot_id,
-                'sender_id': message['sender_id'],
+                'message_id': str(message['id']),
+                'match_id': str(message['match_id']),
+                'bot_id': str(bot_id),
+                'sender_id': str(message['sender_id']),
                 'message_content': message['content'],  # worker attend 'message_content'
                 'created_at': message['created_at'].isoformat() if hasattr(message['created_at'], 'isoformat') else str(message['created_at']),
                 'was_scheduled': True  # Flag pour tracking
