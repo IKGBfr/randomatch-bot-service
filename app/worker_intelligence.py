@@ -357,12 +357,14 @@ TA RÉPONSE:"""
             bot_id = event_data['bot_id']
             main_msg = messages[-1]
             user_id = main_msg['sender_id']
+            message_id = main_msg.get('message_id')  # ✅ EXTRAIRE message_id pour grouped
             user_message = ' '.join([m['message_content'] for m in messages])
             logger.info(f"📦 Traitement {len(messages)} messages groupés")
         else:
             match_id = event_data['match_id']
             bot_id = event_data['bot_id']
             user_id = event_data['sender_id']
+            message_id = event_data.get('message_id')  # ✅ EXTRAIRE message_id pour simple
             user_message = event_data['message_content']
         
         logger.info("=" * 60)
@@ -387,7 +389,7 @@ TA RÉPONSE:"""
             if next_available:
                 # Scheduler le message pour plus tard
                 await self._schedule_message_for_later(
-                    event_data=event_data,
+                    message_id=message_id,
                     match_id=match_id,
                     bot_id=bot_id,
                     user_id=user_id,
@@ -843,7 +845,7 @@ TA RÉPONSE:"""
     
     async def _schedule_message_for_later(
         self,
-        event_data: dict,
+        message_id: str,
         match_id: str,
         bot_id: str,
         user_id: str,
@@ -854,11 +856,8 @@ TA RÉPONSE:"""
         Insère dans bot_message_queue avec statut 'pending' et scheduled_for.
         """
         try:
-            # Récupérer message_id depuis event_data
-            message_id = event_data.get('message_id')
-            
             if not message_id:
-                logger.error("❌ message_id manquant dans event_data, impossible de scheduler")
+                logger.error("❌ message_id manquant, impossible de scheduler")
                 return
             
             # Insérer dans bot_message_queue
