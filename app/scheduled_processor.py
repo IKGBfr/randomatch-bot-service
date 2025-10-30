@@ -105,7 +105,7 @@ class ScheduledProcessor:
             LIMIT $2
         """
         
-        messages = await self.supabase.fetch_all(
+        messages = await self.supabase.fetch(
             query,
             now,
             self.batch_size
