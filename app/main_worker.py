@@ -10,6 +10,7 @@ from app.worker_intelligence import WorkerIntelligence
 from app.match_monitor import MatchMonitor
 from app.supabase_client import SupabaseClient
 from app.config import settings
+from app.scheduled_processor import get_scheduled_processor  # ⏰ TRAITEMENT MESSAGES SCHEDULÉS
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -63,6 +64,7 @@ async def main():
     logger.info("📨 Worker Messages : bot_messages queue")
     logger.info("🔍 Initiation Checker : toutes les 30s")
     logger.info("🔄 Relance Checker : toutes les 60s (2-48h inactif)")
+    logger.info("⏰ Scheduled Processor : toutes les 60s (messages hors horaires)")
     logger.info("🕐 Timing Adaptatif : Phase 4 activé")
     logger.info("=" * 70)
     
@@ -95,11 +97,15 @@ async def main():
             logger.error(f"❌ Erreur fatale message_loop: {e}", exc_info=True)
     
     try:
+        # Initialiser scheduled processor
+        scheduled_processor = await get_scheduled_processor()
+        
         # Lancer en parallèle
         await asyncio.gather(
             message_loop(),
             check_pending_initiations_loop(worker.supabase, worker.redis_client),
-            check_abandoned_conversations_loop(worker.supabase, worker.redis_client)
+            check_abandoned_conversations_loop(worker.supabase, worker.redis_client),
+            scheduled_processor.start()  # ⏰ Traiter messages schedulés
         )
     except KeyboardInterrupt:
         logger.info("\n⚠️  Interruption utilisateur")

@@ -27,6 +27,7 @@ from app.response_cache import ResponseCache
 from app.conversation_lock import ConversationLock
 from app.continuous_monitor import ContinuousMonitor
 from app.unanswered_detector import UnansweredDetector  # 🆕 NOUVEAU
+from app.availability_checker import get_availability_checker  # ⏰ VÉRIF HORAIRES
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -61,6 +62,9 @@ class WorkerIntelligence:
         # 🆕 DÉTECTEUR MESSAGES SANS RÉPONSE
         self.unanswered_detector: UnansweredDetector = None
         
+        # ⏰ VÉRIFICATEUR DISPONIBILITÉ
+        self.availability_checker = None
+        
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
         logger.info("🔌 Connexion à Supabase...")
@@ -74,7 +78,10 @@ class WorkerIntelligence:
         # 🆕 Initialiser unanswered detector
         self.unanswered_detector = UnansweredDetector()
         
-        logger.info("✅ Connecté à Supabase + Continuous Monitor + Unanswered Detector")
+        # ⏰ Initialiser availability checker
+        self.availability_checker = await get_availability_checker()
+        
+        logger.info("✅ Connecté à Supabase + Continuous Monitor + Unanswered Detector + Availability Checker")
         
     async def connect_redis(self):
         """Connexion Redis"""
@@ -354,6 +361,40 @@ TA RÉPONSE:"""
         logger.info(f"   Match: {match_id}")
         logger.info(f"   Message: {user_message[:100]}")
         logger.info("=" * 60)
+        
+        # =============================
+        # 🆕 PHASE -1: VÉRIF DISPONIBILITÉ BOT (NOUVEAU)
+        # =============================
+        logger.info("\n⏰ Phase -1: Vérification disponibilité bot...")
+        
+        is_available, reason = await self.availability_checker.is_bot_available(bot_id)
+        
+        if not is_available:
+            logger.warning(f"⏰ Bot {bot_id[:8]} indisponible: {reason}")
+            
+            # Calculer prochain horaire disponible
+            next_available = await self.availability_checker.get_next_available_time(bot_id)
+            
+            if next_available:
+                # Scheduler le message pour plus tard
+                await self._schedule_message_for_later(
+                    event_data=event_data,
+                    match_id=match_id,
+                    bot_id=bot_id,
+                    user_id=user_id,
+                    scheduled_for=next_available
+                )
+                
+                logger.info(f"📅 Message schedulé pour {next_available.strftime('%Y-%m-%d %H:%M')}")
+                logger.info("✅ Traitement reporté au réveil du bot")
+            else:
+                logger.error(f"❌ Impossible de calculer prochain horaire pour {bot_id[:8]}")
+            
+            # Cleanup et stop
+            await self.response_cache.clear_generating(match_id)
+            return  # STOP - bot indisponible
+        
+        logger.info(f"✅ Bot {bot_id[:8]} disponible, traitement immédiat")
         
         # =============================
         # PHASE 0: DÉTECTION URGENCE (NOUVEAU)
@@ -780,6 +821,59 @@ TA RÉPONSE:"""
             logger.info("   🎯 Bot a quitté la conversation")
         else:
             logger.info("   ✅ Pas d'exit pour ce message")
+    
+    async def _schedule_message_for_later(
+        self,
+        event_data: dict,
+        match_id: str,
+        bot_id: str,
+        user_id: str,
+        scheduled_for: datetime
+    ):
+        """
+        Schedule un message pour traitement ultérieur.
+        Insère dans bot_message_queue avec statut 'pending' et scheduled_for.
+        """
+        try:
+            # Récupérer message_id depuis event_data
+            message_id = event_data.get('message_id')
+            
+            if not message_id:
+                logger.error("❌ message_id manquant dans event_data, impossible de scheduler")
+                return
+            
+            # Insérer dans bot_message_queue
+            query = """
+                INSERT INTO bot_message_queue (
+                    message_id,
+                    match_id,
+                    bot_id,
+                    sender_id,
+                    status,
+                    scheduled_for,
+                    attempts,
+                    max_attempts
+                ) VALUES ($1, $2, $3, $4, 'pending', $5, 0, 3)
+                ON CONFLICT (message_id) 
+                DO UPDATE SET
+                    status = 'pending',
+                    scheduled_for = EXCLUDED.scheduled_for,
+                    attempts = 0
+            """
+            
+            await self.supabase.execute(
+                query,
+                message_id,
+                match_id,
+                bot_id,
+                user_id,
+                scheduled_for
+            )
+            
+            logger.info(f"✅ Message {message_id[:8]} schedulé dans bot_message_queue")
+        
+        except Exception as e:
+            logger.error(f"❌ Erreur _schedule_message_for_later: {e}", exc_info=True)
     
     async def run(self):
         """Lance le worker"""
