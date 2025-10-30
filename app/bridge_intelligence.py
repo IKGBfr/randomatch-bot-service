@@ -59,11 +59,46 @@ class BridgeIntelligence:
         self.match_monitor = MatchMonitor(self.supabase_client)
         logger.info("✅ Connecté à Redis")
     
-    async def push_to_queue(self, message: Dict):
-        """Pousse un message dans la queue"""
+    async def push_to_queue(self, message: Dict, max_retries: int = 3):
+        """Pousse un message dans la queue avec retry automatique"""
         queue_key = "bot_messages"
-        await self.redis_client.rpush(queue_key, json.dumps(message))
-        logger.info(f"✅ Message poussé dans queue")
+        
+        for attempt in range(max_retries):
+            try:
+                await self.redis_client.rpush(queue_key, json.dumps(message))
+                logger.info(f"✅ Message poussé dans queue")
+                return  # Succès
+                
+            except redis.ConnectionError as e:
+                logger.warning(f"⚠️ Tentative {attempt + 1}/{max_retries} - Connexion Redis perdue: {e}")
+                
+                if attempt < max_retries - 1:
+                    # Attendre avant retry (backoff exponentiel)
+                    wait_time = 2 ** attempt  # 1s, 2s, 4s
+                    logger.info(f"⏳ Retry dans {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    
+                    # Tenter reconnexion Redis
+                    try:
+                        logger.info("🔄 Reconnexion Redis...")
+                        await self.redis_client.close()
+                        self.redis_client = await redis.from_url(
+                            settings.redis_url,
+                            encoding="utf-8",
+                            decode_responses=True
+                        )
+                        self.context_manager = RedisContextManager(self.redis_client)
+                        logger.info("✅ Reconnexion Redis réussie")
+                    except Exception as reconnect_error:
+                        logger.error(f"❌ Reconnexion Redis échouée: {reconnect_error}")
+                else:
+                    # Dernière tentative échouée
+                    logger.error(f"❌ Échec définitif après {max_retries} tentatives")
+                    raise
+                    
+            except Exception as e:
+                logger.error(f"❌ Erreur inattendue push_to_queue: {type(e).__name__}: {e}")
+                raise
     
     async def delayed_push(self, match_id: str):
         """
@@ -98,10 +133,12 @@ class BridgeIntelligence:
         Callback PostgreSQL NOTIFY avec grouping intelligent + cooldown
         """
         try:
-            logger.info(f"📨 Notification reçue")
+            logger.info(f"📨 Notification reçue (pid={pid}, channel={channel})")
+            logger.debug(f"   Payload: {payload[:200]}...")  # Log premiers 200 chars
             
             message = json.loads(payload)
             match_id = message['match_id']
+            logger.debug(f"   Match ID: {match_id}")
             
             # 🆕 CHECK COOLDOWN - Évite jobs multiples pour messages rapprochés
             last_push = self.last_push_times.get(match_id)
@@ -152,8 +189,15 @@ class BridgeIntelligence:
             context['timer_started'] = True
             await self.context_manager.set_context(match_id, context)
             
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Erreur parsing JSON payload: {e}")
+            logger.error(f"   Payload reçu: {payload}")
+        except KeyError as e:
+            logger.error(f"❌ Clé manquante dans payload: {e}")
+            logger.error(f"   Message: {message}")
         except Exception as e:
-            logger.error(f"❌ Erreur notification: {e}")
+            logger.error(f"❌ Erreur inattendue dans handle_notification: {type(e).__name__}: {e}")
+            logger.exception("Stack trace complet:")  # Log full stack trace
     
     async def handle_new_match(self, connection, pid, channel, payload):
         """
