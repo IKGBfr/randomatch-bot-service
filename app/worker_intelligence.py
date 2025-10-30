@@ -64,6 +64,15 @@ class WorkerIntelligence:
         
         # ⏰ VÉRIFICATEUR DISPONIBILITÉ
         self.availability_checker = None
+    
+    async def connect(self):
+        """
+        Méthode unifiée pour connecter tous les services.
+        Utilisée par scheduled_processor.
+        """
+        await self.connect_supabase()
+        await self.connect_redis()
+        self.connect_openai()
         
     async def connect_supabase(self):
         """Connexion Supabase custom client"""
@@ -821,6 +830,16 @@ TA RÉPONSE:"""
             logger.info("   🎯 Bot a quitté la conversation")
         else:
             logger.info("   ✅ Pas d'exit pour ce message")
+    
+    async def close(self):
+        """
+        Méthode unifiée pour fermer toutes les connexions.
+        Utilisée par scheduled_processor.
+        """
+        if self.redis_client:
+            await self.redis_client.aclose()
+        if self.supabase:
+            await self.supabase.close()
     
     async def _schedule_message_for_later(
         self,

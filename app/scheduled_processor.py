@@ -43,6 +43,8 @@ class ScheduledProcessor:
         # Initialiser connexions
         await self.supabase.connect()
         self.availability_checker = await get_availability_checker()
+        
+        # Initialiser worker pour traiter les messages
         self.worker = WorkerIntelligence()
         await self.worker.connect()
         
@@ -195,7 +197,7 @@ class ScheduledProcessor:
                 'match_id': message['match_id'],
                 'bot_id': bot_id,
                 'sender_id': message['sender_id'],
-                'content': message['content'],
+                'message_content': message['content'],  # worker attend 'message_content'
                 'created_at': message['created_at'].isoformat() if hasattr(message['created_at'], 'isoformat') else str(message['created_at']),
                 'was_scheduled': True  # Flag pour tracking
             }
